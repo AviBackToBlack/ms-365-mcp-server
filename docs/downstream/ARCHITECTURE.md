@@ -151,6 +151,20 @@ The downstream pipeline will be layered instead of treating generic scanners as 
 
 New Graph write permissions are fail-closed until explicitly approved. New outbound destinations require explicit review.
 
+## Fork bootstrap invariants
+
+Repository-level operational trust configuration is not assumed to be inherited from upstream when the fork is created.
+
+Before the downstream repository is treated as operational, verify explicitly that:
+
+- GitHub Actions is enabled for the fork;
+- inherited upstream publisher workflows are prevented from publishing from the downstream repository;
+- the automated reviewer identity has the access required by the repository ownership model;
+- the signed `pull_request` webhook for the automated reviewer is configured and healthy;
+- no webhook secret or other operational credential is committed to the repository.
+
+For a repository owned by a GitHub personal account, collaborator access is not a granular read-only reviewer role: collaborators are write-capable. That makes branch/ruleset protection of the approved branch a required control before production acceptance, even though the full governance configuration is introduced separately.
+
 ## Upstream release workflow safety
 
 The upstream release workflow is not our release mechanism.
