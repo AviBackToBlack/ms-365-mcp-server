@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "verifiedAtUtc": "2026-09-25T21:51:00Z",
+  "upstream": {
+    "repository": "https://github.com/Softeria/ms-365-mcp-server",
+    "version": "0.156.2",
+    "tag": "v0.156.2",
+    "commit": "3683f55f3917885d80f31cb6f5423ef6da4cee52"
+  },
+  "npm": {
+    "package": "@softeria/ms-365-mcp-server",
+    "version": "0.156.2",
+    "gitHead": "3683f55f3917885d80f31cb6f5423ef6da4cee52",
+    "integrity": "sha512-6dhKFwgbSdGUFr2N/j3sMNrrKXZusyXeWkmuf0B6jhTRSLXkIA4Oa6qIf2kONGLlPVwJbCqKdWJuvm713gu6QQ==",
+    "legacySha1": "82984e5f579fb27e6daad1e01fa5de04e32d717f",
+    "tarballSha256": "d1ddb4d1ddcc66b65f33da8c5fefd28e886526f061ec1f376781cc419779b3d2",
+    "tarballSha512": "e9d84a17081b49d19416bd8dfe3dec30daeb29766eb325de5a49ae7f407a8e14d148b5e4200e0e6baa887f690e3462e53d5c096c2a8a75626ebe6ef5de0bba41"
+  },
+  "downstream": {
+    "repository": "https://github.com/AviBackToBlack/ms-365-mcp-server",
+    "versionScheme": "v<upstream-version>-abtb.<revision>"
+  }
+}
