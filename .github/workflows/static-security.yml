@@ -1,0 +1,116 @@
+name: Static Security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SEMGREP_IMAGE: semgrep/semgrep@sha256:32e459968daabe7ab86968184a29109b9564aa00392401156f9788452b42786b
+  SEMGREP_RULES_COMMIT: 311ca4e9ba59d700624539bf658e3d29b134ee77
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@88585263c0627ee42c0e1c5143a112c8d6f4aa18 # v4.38.2
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@88585263c0627ee42c0e1c5143a112c8d6f4aa18 # v4.38.2
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Checkout pinned Semgrep rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          rules_dir="$RUNNER_TEMP/semgrep-rules"
+          git init -q "$rules_dir"
+          git -C "$rules_dir" remote add origin https://github.com/semgrep/semgrep-rules.git
+          git -C "$rules_dir" fetch -q --depth 1 origin "$SEMGREP_RULES_COMMIT"
+          git -C "$rules_dir" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$rules_dir" rev-parse HEAD)" = "$SEMGREP_RULES_COMMIT"
+
+      - name: Run pinned blocking security rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/src:ro" \
+            --volume "$RUNNER_TEMP/semgrep-rules:/rules:ro" \
+            --workdir /src \
+            "$SEMGREP_IMAGE" \
+            semgrep scan \
+              --metrics=off \
+              --error \
+              --severity ERROR \
+              --exclude 'src/__tests__/**' \
+              --config /rules/javascript/lang/security \
+              --config /rules/javascript/express/security \
+              --config /rules/javascript/node-crypto/security \
+              src
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Download and verify Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  ${archive}" | sha256sum --check -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Scan Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/gitleaks.json"
+          set +e
+          "$RUNNER_TEMP/gitleaks" git \
+            --redact \
+            --no-banner \
+            --config .gitleaks.toml \
+            --report-format json \
+            --report-path "$report" \
+            .
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            jq '[.[] | {RuleID, File, StartLine, Commit, Fingerprint}]' "$report"
+            exit "$rc"
+          fi
