@@ -37,7 +37,7 @@ The baseline currently accepts exactly one known advisory:
 
 - `esbuild@0.27.4` - `GHSA-g7r4-m6w7-qqqr` - low severity, development scope.
 
-The advisory concerns esbuild's development server on Windows. The project does not invoke the esbuild serve API in approved build, test, or runtime paths. The fixed esbuild line starts at 0.28.1, while current `tsup@8.5.1` declares `esbuild ^0.27.0`. Forcing an override solely to make an audit counter reach zero would put the dependency tree outside the tool's declared compatibility range.
+The advisory concerns esbuild's development server on Windows. The project does not invoke the esbuild serve API in approved build, test, or runtime paths. The fixed esbuild line starts at 0.28.1, while current `tsup@8.5.1` declares `esbuild ^0.27.0` and `tsx@4.21.0` declares `esbuild ~0.27.0`. Forcing an override solely to make an audit counter reach zero would put the dependency tree outside the tools' declared compatibility ranges.
 
 This exception is therefore explicit, machine-readable, and temporary. It must be revisited when any trigger listed in `downstream/supply-chain-policy.json` occurs.
 
@@ -51,4 +51,4 @@ SBOM generation, downstream artifact attestation, and release provenance remain 
 
 ## Gate self-tests
 
-The repository test suite includes negative fixtures for the supply-chain verifiers. The tests require a tampered lockfile hash, an unapproved advisory, and a Node-version policy mismatch to fail closed. This is intentionally minimal coverage of the security boundary rather than exhaustive testing of npm itself.
+The repository test suite includes 14 negative fixtures for the supply-chain verifiers. They exercise lockfile hash/version/count drift, Node and npm version drift, registry-origin and integrity violations, install-script surface drift, missing resolution metadata, unapproved or re-rated advisories, stale vulnerability exceptions, npm-audit error payloads, and string-only transitive advisory chains. The fixtures test our fail-closed branches and diagnostics; they are not intended to reimplement or exhaustively test npm itself.
