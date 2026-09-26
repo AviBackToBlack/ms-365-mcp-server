@@ -133,6 +133,10 @@
       "file": "bin/modules/simplified-openapi.mjs"
     },
     {
+      "callee": "writeFileSync",
+      "file": "scripts/mcp-security-snapshot.mjs"
+    },
+    {
       "callee": "chmodSync",
       "file": "src/audit-log.ts"
     },

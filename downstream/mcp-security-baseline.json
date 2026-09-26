@@ -11,7 +11,7 @@
     "bin/modules/extract-descriptions.mjs": "b591088dbd743b39190f5133f58da5c448e641d2a41a1f248ffea10e2bf11fc1",
     "bin/modules/generate-mcp-tools.mjs": "b19863a738ce68fd25ebb78e12b11bf5e17a0f79eacb1e289f3b71f585561e65",
     "bin/modules/simplified-openapi.mjs": "24a43b484370dd7453b0c2e89cbe76398740deb0a7cbd7a5d8dce86c23daeaa4",
-    "scripts/mcp-security-snapshot.mjs": "7179c89827a8828bf3501c91a69fee5fc76c226b0d0b07035814241ecf5f117a",
+    "scripts/mcp-security-snapshot.mjs": "13a6f1cd1ec0938a4e638a292b08547442f9252179770c67fba395512765dd7c",
     "scripts/verify-npm-audit.mjs": "5ba3d376760b646cf649f876c4365b9e2fccb15634e9cfa185a9f2fb92152845",
     "scripts/verify-supply-chain.mjs": "31b53257e352813eccac6c490b3a65b400e865862cac9ff6bc514a097d4555a9",
     "src/attachment-route.ts": "ade4d472abd1d09c9a72eb3e45f51549c230c28b347b18fd9bbff76d30b04482",
@@ -38,11 +38,11 @@
     "src/lib/cache-encryption.ts": "f1354d3c8b3ee8978df9109f6f3dbf9e82ba6d6d759ff14dd18adde44f725852",
     "src/lib/config-paths.ts": "2c5d3e45a6d6f1f8e89536bd7b0e4b8bfe7ed10b4f6f3a53706fdb185a30f39b",
     "src/lib/destructive-ops.ts": "d96994bf5f347253e2fcf043126697f95c140101b7b3b96f4765d0c23c955f4b",
-    "src/lib/graph-resilience.ts": "f5f8cb32d486dc608615b0764ee0d731efa2536919edcf048940193da9dce81d",
+    "src/lib/graph-resilience.ts": "a59475f227d1b71c4c597ff5fe8f3bc7724b5ff0062e6432b3aa4d183b301d67",
     "src/lib/log-redactor.ts": "da0707935fe7699965fa73d2d481b531b53a3e62d431182114927605d85d2507",
-    "src/lib/message-signoff.ts": "7dfc9076e7bdc05d3146ba45767e74689be05a420c72022e48bc3e5b147d187d",
+    "src/lib/message-signoff.ts": "5f5cbb556d37839fd9d7ec69ee1add0f4b2b7ff2ef84c42007e40ebc0cfd4561",
     "src/lib/microsoft-auth.ts": "4281126e661eee47a7048e70402f9d4256949decd20efeb12aafac7a256d62c9",
-    "src/lib/param-descriptions.ts": "92aca10a0079f2d1735fcdc5974bf545a5b5efbf2a5c91166e7bc37fec9bde33",
+    "src/lib/param-descriptions.ts": "052fe220154f8a3eb868393035e80c71e141e7da261c33ad1f67b8c6bedb85c3",
     "src/lib/path-params.ts": "139970e669e4141ddcd2d0060660436eb4079a1da8d8daccf4880b46a890156a",
     "src/lib/query-parameter-schema.ts": "05163412430d5d5bbd700c95c67fd26d169fb5ef37f1e803db8483ee8e99ccbb",
     "src/lib/redirect-uri-validation.ts": "60493783dfbf2c49115c83a8dbf0ebc520a089f77973d07a8072999a9f90eb7b",
@@ -50,7 +50,7 @@
     "src/lib/teams-url-parser.ts": "b6db5f6aa5633ee73671c22246c0fdc68268fa4ca22bb0838c24dbeb9d4014f4",
     "src/lib/tool-schema.ts": "6842f1af726b5f7d1fb5e23bfff6859cfa38a637547b478a34223f572b05e3b6",
     "src/lib/url-signing.ts": "95dcf895de00c4c741794a5f4fad9e1c8badd6df665f5477db35684f7ce9e1ce",
-    "src/load-env.ts": "6a34e8c37b5652ea64369dcb59683bf017a1adbab9601c77efcc204b48eb3795",
+    "src/load-env.ts": "43000ba507e2524d2fb6d983dce2cac9780c7446edb5aebf51c19abdf793fe99",
     "src/logger.ts": "19d5b8e5a0462b23d825779dd9b83c64a888a588aab10f39049a69cf34c22479",
     "src/mcp-instructions.ts": "2479d5f8fc51987d743804a0a780b2d7b91b8ad6b508a5719470f54b2f6a852a",
     "src/normalize-tool-schema.ts": "f7dbfbb934b8a9998b4c7dd00a5faf1043a7188f1919bb575cb27934bc8317db",
@@ -60,7 +60,7 @@
     "src/secrets.ts": "eae1c4a4bcad51dd19e18ec644aac46643ce3b2feebb90a9f6952a46670d0b56",
     "src/server.ts": "b0a6248565a8673f495d96419723173a3821f535dd57fa818196c09125dab3a1",
     "src/startup-pinning.ts": "3fe12cfb901826779d0342dbf6e6bfe2bb94bb7d56e4b1e228ca7e3d821fd52f",
-    "src/token-cache-storage.ts": "b22e8ac8e7a982bb39d69e0edd14a0b22b81c4daeb995ab291255acd57051af5",
+    "src/token-cache-storage.ts": "8b4bb40f604b81ba493042c5d953d38c0146ffdbe3057e177589d98c6efe0d42",
     "src/tool-categories.ts": "085aeb3136c0348659bdb36646fcd214a9acdd4c49f8f891badf7eef24d3aef2",
     "src/version.ts": "7670d20d76f13e8a03285b64f51834c28fdfc8624dfa0e4458310c19b40b4eca"
   },
@@ -105,6 +105,10 @@
     {
       "callee": "writeFileSync",
       "file": "bin/modules/simplified-openapi.mjs"
+    },
+    {
+      "callee": "writeFileSync",
+      "file": "scripts/mcp-security-snapshot.mjs"
     },
     {
       "callee": "chmodSync",

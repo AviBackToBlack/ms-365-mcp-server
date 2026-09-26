@@ -275,6 +275,15 @@ describe('MCP security baseline', () => {
 
     const exportAll = scanFixture("export * from 'node:child_process';");
     expect(exportAll.processExecution.some((site) => site.callee === '*')).toBe(true);
+
+    const typeOnly = scanFixture("export { type execSync } from 'child_process';");
+    expect(typeOnly.processExecution).toEqual([]);
+
+    const fsReexport = scanFixture("export { writeFileSync } from 'node:fs';");
+    expect(fsReexport.filesystemWrites).toContainEqual({
+      file: fsReexport.filesystemWrites[0].file,
+      callee: 'writeFileSync',
+    });
   });
 
   it('ignores type-only builtin imports', () => {
@@ -341,6 +350,89 @@ describe('MCP security baseline', () => {
       expect(snapshot.criticalFileSha256[path]).toMatch(/^[0-9a-f]{64}$/);
     }
     expect(snapshot.criticalFileSha256['src/generated/client.ts']).toBeUndefined();
+  });
+
+  it('fails closed on node:vm and worker_threads execution modules', () => {
+    const scan = scanFixture(
+      [
+        "import vm from 'node:vm';",
+        "import { Worker } from 'node:worker_threads';",
+        "vm.runInNewContext('1');",
+        "new Worker('1', { eval: true });",
+        "const vm2 = process.getBuiltinModule('vm');",
+        "vm2.compileFunction('return 1', []);",
+      ].join('\n')
+    );
+
+    expect(scan.dynamicCode.some((entry) => entry.kind === 'module node:vm')).toBe(true);
+    expect(scan.dynamicCode.some((entry) => entry.kind === 'module vm')).toBe(true);
+    expect(
+      scan.processExecution.some(
+        (entry) => entry.module === 'node:worker_threads' && entry.callee === 'Worker'
+      )
+    ).toBe(true);
+  });
+
+  it('fails closed on computed or wholesale environment access', () => {
+    const scan = scanFixture(
+      [
+        'const env = process.env;',
+        'const key = getName();',
+        'const a = env[key];',
+        'const b = { ...process.env };',
+        'const c = Object.entries(env);',
+        'const d = JSON.stringify(process.env);',
+        'for (const k in env) { void k; }',
+        'const { [key]: value } = env;',
+      ].join('\n')
+    );
+    expect(scan.networkUrlEnvVars).toContain('<dynamic>');
+
+    const snapshot = clone(baseline);
+    snapshot.networkUrlEnvVars = [...new Set([...baseline.networkUrlEnvVars, '<dynamic>'])].sort();
+    expect(validatePolicy(snapshot, policy).join('\n')).toContain(
+      'unapproved URL-bearing network env vars: <dynamic>'
+    );
+  });
+
+  it('detects process/getBuiltinModule aliases and Reflect.construct dynamic code', () => {
+    const scan = scanFixture(
+      [
+        "import proc from 'node:process';",
+        'const p = proc;',
+        'const getBuiltin = p.getBuiltinModule;',
+        "const { execSync } = getBuiltin('child_process');",
+        "execSync('echo safe-fixture');",
+        "globalThis.process.getBuiltinModule('node:worker_threads');",
+        "Reflect['apply'](eval, null, ['1']);",
+        "Reflect.construct(Function, ['return 1']);",
+        'const F = Function.prototype.constructor;',
+      ].join('\n')
+    );
+
+    expect(scan.processExecution.some((entry) => entry.callee === 'execSync')).toBe(true);
+    expect(scan.processExecution.some((entry) => entry.module === 'node:worker_threads')).toBe(
+      true
+    );
+    const kinds = scan.dynamicCode.map((entry) => entry.kind);
+    expect(kinds).toContain('Reflect.apply eval');
+    expect(kinds).toContain('Reflect.construct Function');
+    expect(kinds).toContain('alias Function.prototype.constructor');
+  });
+
+  it('intentionally inventories env-style names even on non-env owners', () => {
+    const scan = scanFixture(
+      ['const a = config.SOME_SERVICE_URL;', "const b = row['REDIRECT_URIS'];"].join('\n')
+    );
+    expect(scan.networkUrlEnvVars).toEqual(['REDIRECT_URIS', 'SOME_SERVICE_URL']);
+  });
+
+  it('includes the verifier in its own capability boundary', () => {
+    const snapshot = buildSnapshot();
+    expect(snapshot.filesystemWrites).toContainEqual({
+      file: 'scripts/mcp-security-snapshot.mjs',
+      callee: 'writeFileSync',
+    });
   });
 
   it('locks the first-production runtime profile', () => {

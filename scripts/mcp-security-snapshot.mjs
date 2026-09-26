@@ -52,6 +52,9 @@ const FS_WRITE_CALLEES = new Set([
 ]);
 
 const CHILD_PROCESS_MODULES = new Set(['child_process', 'node:child_process']);
+const VM_MODULES = new Set(['vm', 'node:vm']);
+const WORKER_THREAD_MODULES = new Set(['worker_threads', 'node:worker_threads']);
+const PROCESS_MODULES = new Set(['process', 'node:process']);
 const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
 const CREATE_REQUIRE_MODULES = new Set(['module', 'node:module']);
 const NETWORK_ENV_NAME_RE =
@@ -133,6 +136,8 @@ export function scanCode(files) {
     const createRequireImports = new Set();
     const moduleNamespaces = new Set();
     const requireAliases = new Set(['require']);
+    const processAliases = new Set(['process']);
+    const getBuiltinModuleAliases = new Set();
     const envAliases = new Set();
 
     function addEnvBinding(name) {
@@ -149,17 +154,38 @@ export function scanCode(files) {
       }
     }
 
+    function isGlobalThisObject(node) {
+      const expr = unwrapExpression(node);
+      return (
+        !!expr && ts.isIdentifier(expr) && (expr.text === 'globalThis' || expr.text === 'global')
+      );
+    }
+
+    function isProcessObject(node) {
+      const expr = unwrapExpression(node);
+      if (!expr) return false;
+      if (ts.isIdentifier(expr) && processAliases.has(expr.text)) return true;
+      return (
+        (ts.isPropertyAccessExpression(expr) &&
+          isGlobalThisObject(expr.expression) &&
+          expr.name.text === 'process') ||
+        (ts.isElementAccessExpression(expr) &&
+          isGlobalThisObject(expr.expression) &&
+          expr.argumentExpression &&
+          ts.isStringLiteralLike(expr.argumentExpression) &&
+          expr.argumentExpression.text === 'process')
+      );
+    }
+
     function isProcessEnvObject(node) {
       const expr = unwrapExpression(node);
       if (!expr) return false;
       return (
         (ts.isPropertyAccessExpression(expr) &&
-          ts.isIdentifier(unwrapExpression(expr.expression)) &&
-          unwrapExpression(expr.expression).text === 'process' &&
+          isProcessObject(expr.expression) &&
           expr.name.text === 'env') ||
         (ts.isElementAccessExpression(expr) &&
-          ts.isIdentifier(unwrapExpression(expr.expression)) &&
-          unwrapExpression(expr.expression).text === 'process' &&
+          isProcessObject(expr.expression) &&
           expr.argumentExpression &&
           ts.isStringLiteralLike(expr.argumentExpression) &&
           expr.argumentExpression.text === 'env')
@@ -170,6 +196,14 @@ export function scanCode(files) {
       const expr = unwrapExpression(node);
       return (
         isProcessEnvObject(expr) || (expr && ts.isIdentifier(expr) && envAliases.has(expr.text))
+      );
+    }
+
+    function isEnvShapedObject(node) {
+      const expr = unwrapExpression(node);
+      return (
+        isEnvObject(expr) ||
+        (expr && ts.isIdentifier(expr) && (expr.text === 'env' || expr.text === 'environment'))
       );
     }
 
@@ -203,6 +237,9 @@ export function scanCode(files) {
       if (ts.isIdentifier(callee) && requireAliases.has(callee.text)) {
         return arg.text;
       }
+      if (ts.isIdentifier(callee) && getBuiltinModuleAliases.has(callee.text)) {
+        return arg.text;
+      }
 
       if (
         ts.isCallExpression(callee) &&
@@ -214,8 +251,7 @@ export function scanCode(files) {
 
       if (
         ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(unwrapExpression(callee.expression)) &&
-        unwrapExpression(callee.expression).text === 'process' &&
+        isProcessObject(callee.expression) &&
         callee.name.text === 'getBuiltinModule'
       ) {
         return arg.text;
@@ -223,8 +259,7 @@ export function scanCode(files) {
 
       if (
         ts.isElementAccessExpression(callee) &&
-        ts.isIdentifier(unwrapExpression(callee.expression)) &&
-        unwrapExpression(callee.expression).text === 'process' &&
+        isProcessObject(callee.expression) &&
         callee.argumentExpression &&
         ts.isStringLiteralLike(callee.argumentExpression) &&
         callee.argumentExpression.text === 'getBuiltinModule'
@@ -249,7 +284,11 @@ export function scanCode(files) {
         }
       }
 
-      if (CHILD_PROCESS_MODULES.has(mod)) {
+      if (VM_MODULES.has(mod)) {
+        dynamicCode.push({ file: rel, kind: 'module ' + mod });
+      }
+
+      if (CHILD_PROCESS_MODULES.has(mod) || WORKER_THREAD_MODULES.has(mod)) {
         if (ts.isIdentifier(name)) {
           childNamespaces.set(name.text, mod);
           processExecution.push({ file: rel, module: mod, callee: '*' });
@@ -319,6 +358,17 @@ export function scanCode(files) {
         return "globalThis['" + expr.argumentExpression.text + "']";
       }
 
+      if (
+        ts.isPropertyAccessExpression(expr) &&
+        expr.name.text === 'constructor' &&
+        ts.isPropertyAccessExpression(expr.expression) &&
+        ts.isIdentifier(expr.expression.expression) &&
+        expr.expression.expression.text === 'Function' &&
+        expr.expression.name.text === 'prototype'
+      ) {
+        return 'Function.prototype.constructor';
+      }
+
       if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
         return dynamicCodeTarget(expr.right);
       }
@@ -348,19 +398,26 @@ export function scanCode(files) {
         }
       }
 
-      if (
-        (mod === 'process' || mod === 'node:process') &&
-        clause.namedBindings &&
-        ts.isNamedImports(clause.namedBindings)
-      ) {
-        for (const el of clause.namedBindings.elements) {
-          if (el.isTypeOnly) continue;
-          const imported = el.propertyName?.text ?? el.name.text;
-          if (imported === 'env') envAliases.add(el.name.text);
+      if (PROCESS_MODULES.has(mod)) {
+        if (clause.name) processAliases.add(clause.name.text);
+        if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+          processAliases.add(clause.namedBindings.name.text);
+        }
+        if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+          for (const el of clause.namedBindings.elements) {
+            if (el.isTypeOnly) continue;
+            const imported = el.propertyName?.text ?? el.name.text;
+            if (imported === 'env') envAliases.add(el.name.text);
+            if (imported === 'getBuiltinModule') getBuiltinModuleAliases.add(el.name.text);
+          }
         }
       }
 
-      if (CHILD_PROCESS_MODULES.has(mod)) {
+      if (VM_MODULES.has(mod)) {
+        dynamicCode.push({ file: rel, kind: 'module ' + mod });
+      }
+
+      if (CHILD_PROCESS_MODULES.has(mod) || WORKER_THREAD_MODULES.has(mod)) {
         if (clause.name) {
           childNamespaces.set(clause.name.text, mod);
           processExecution.push({ file: rel, module: mod, callee: '*' });
@@ -405,19 +462,37 @@ export function scanCode(files) {
         ts.isExportDeclaration(stmt) &&
         !stmt.isTypeOnly &&
         stmt.moduleSpecifier &&
-        ts.isStringLiteralLike(stmt.moduleSpecifier) &&
-        CHILD_PROCESS_MODULES.has(stmt.moduleSpecifier.text)
+        ts.isStringLiteralLike(stmt.moduleSpecifier)
       ) {
-        if (!stmt.exportClause) {
-          processExecution.push({ file: rel, module: stmt.moduleSpecifier.text, callee: '*' });
-        } else if (ts.isNamedExports(stmt.exportClause)) {
-          for (const el of stmt.exportClause.elements) {
-            const exported = el.propertyName?.text ?? el.name.text;
-            processExecution.push({
-              file: rel,
-              module: stmt.moduleSpecifier.text,
-              callee: exported,
-            });
+        const mod = stmt.moduleSpecifier.text;
+
+        if (VM_MODULES.has(mod)) {
+          dynamicCode.push({ file: rel, kind: 'module ' + mod });
+        }
+
+        if (CHILD_PROCESS_MODULES.has(mod) || WORKER_THREAD_MODULES.has(mod)) {
+          if (!stmt.exportClause) {
+            processExecution.push({ file: rel, module: mod, callee: '*' });
+          } else if (ts.isNamedExports(stmt.exportClause)) {
+            for (const el of stmt.exportClause.elements) {
+              if (el.isTypeOnly) continue;
+              const exported = el.propertyName?.text ?? el.name.text;
+              processExecution.push({ file: rel, module: mod, callee: exported });
+            }
+          }
+        }
+
+        if (FS_MODULES.has(mod)) {
+          if (!stmt.exportClause) {
+            filesystemWrites.push({ file: rel, callee: '*' });
+          } else if (ts.isNamedExports(stmt.exportClause)) {
+            for (const el of stmt.exportClause.elements) {
+              if (el.isTypeOnly) continue;
+              const exported = el.propertyName?.text ?? el.name.text;
+              if (FS_WRITE_CALLEES.has(exported)) {
+                filesystemWrites.push({ file: rel, callee: exported });
+              }
+            }
           }
         }
       }
@@ -440,6 +515,12 @@ export function scanCode(files) {
         ts.isObjectBindingPattern(node.name)
       ) {
         for (const element of node.name.elements) {
+          if (element.propertyName && ts.isComputedPropertyName(element.propertyName)) {
+            if (!node.initializer || isEnvShapedObject(node.initializer)) {
+              networkUrlEnvVars.add('<dynamic>');
+            }
+            continue;
+          }
           const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
           const normalized = key.replace(/^['"]|['"]$/g, '');
           if (NETWORK_ENV_NAME_RE.test(normalized)) networkUrlEnvVars.add(normalized);
@@ -461,6 +542,26 @@ export function scanCode(files) {
             const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
             if (key === 'env' && ts.isIdentifier(element.name)) envAliases.add(element.name.text);
           }
+        }
+
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          initializer &&
+          isProcessObject(initializer)
+        ) {
+          processAliases.add(node.name.text);
+        }
+
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          initializer &&
+          ts.isPropertyAccessExpression(initializer) &&
+          isProcessObject(initializer.expression) &&
+          initializer.name.text === 'getBuiltinModule'
+        ) {
+          getBuiltinModuleAliases.add(node.name.text);
         }
 
         if (
@@ -522,6 +623,26 @@ export function scanCode(files) {
       const envName = envAccessName(node);
       if (envName && NETWORK_ENV_NAME_RE.test(envName)) networkUrlEnvVars.add(envName);
 
+      if (
+        ts.isElementAccessExpression(node) &&
+        isEnvShapedObject(node.expression) &&
+        node.argumentExpression &&
+        !ts.isStringLiteralLike(node.argumentExpression)
+      ) {
+        networkUrlEnvVars.add('<dynamic>');
+      }
+
+      if (
+        (ts.isSpreadAssignment(node) || ts.isSpreadElement(node)) &&
+        isEnvShapedObject(node.expression)
+      ) {
+        networkUrlEnvVars.add('<dynamic>');
+      }
+
+      if (ts.isForInStatement(node) && isEnvShapedObject(node.expression)) {
+        networkUrlEnvVars.add('<dynamic>');
+      }
+
       if (ts.isCallExpression(node)) {
         if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
           const arg = node.arguments[0];
@@ -539,26 +660,71 @@ export function scanCode(files) {
         if (dynamicTarget) dynamicCode.push({ file: rel, kind: 'call ' + dynamicTarget });
 
         const callExpr = unwrapExpression(node.expression);
+        let callOwner;
+        let callMethod;
         if (ts.isPropertyAccessExpression(callExpr)) {
-          const method = callExpr.name.text;
-          const ownerTarget = dynamicCodeTarget(callExpr.expression);
-          if (ownerTarget && ['call', 'apply', 'bind'].includes(method)) {
-            dynamicCode.push({ file: rel, kind: method + ' ' + ownerTarget });
+          callOwner = unwrapExpression(callExpr.expression);
+          callMethod = callExpr.name.text;
+        } else if (
+          ts.isElementAccessExpression(callExpr) &&
+          callExpr.argumentExpression &&
+          ts.isStringLiteralLike(callExpr.argumentExpression)
+        ) {
+          callOwner = unwrapExpression(callExpr.expression);
+          callMethod = callExpr.argumentExpression.text;
+        }
+
+        if (callOwner && callMethod) {
+          const ownerTarget = dynamicCodeTarget(callOwner);
+          if (ownerTarget && ['call', 'apply', 'bind'].includes(callMethod)) {
+            dynamicCode.push({ file: rel, kind: callMethod + ' ' + ownerTarget });
           }
           if (
-            ts.isIdentifier(unwrapExpression(callExpr.expression)) &&
-            unwrapExpression(callExpr.expression).text === 'Reflect' &&
-            method === 'apply' &&
+            ts.isIdentifier(callOwner) &&
+            callOwner.text === 'Reflect' &&
+            ['apply', 'construct'].includes(callMethod) &&
             node.arguments[0]
           ) {
             const reflectTarget = dynamicCodeTarget(node.arguments[0]);
-            if (reflectTarget)
-              dynamicCode.push({ file: rel, kind: 'Reflect.apply ' + reflectTarget });
+            if (reflectTarget) {
+              dynamicCode.push({
+                file: rel,
+                kind: 'Reflect.' + callMethod + ' ' + reflectTarget,
+              });
+            }
+          }
+
+          const wholesaleEnvCall =
+            (ts.isIdentifier(callOwner) &&
+              callOwner.text === 'Object' &&
+              [
+                'entries',
+                'keys',
+                'values',
+                'getOwnPropertyNames',
+                'getOwnPropertySymbols',
+                'assign',
+              ].includes(callMethod)) ||
+            (ts.isIdentifier(callOwner) &&
+              callOwner.text === 'JSON' &&
+              callMethod === 'stringify') ||
+            (ts.isIdentifier(callOwner) &&
+              callOwner.text === 'Reflect' &&
+              callMethod === 'ownKeys');
+
+          if (wholesaleEnvCall && node.arguments.some((arg) => isEnvShapedObject(arg))) {
+            networkUrlEnvVars.add('<dynamic>');
           }
         }
 
         const required = requireModule(node);
-        if (required && CHILD_PROCESS_MODULES.has(required)) {
+        if (required && VM_MODULES.has(required)) {
+          dynamicCode.push({ file: rel, kind: 'module ' + required });
+        }
+        if (
+          required &&
+          (CHILD_PROCESS_MODULES.has(required) || WORKER_THREAD_MODULES.has(required))
+        ) {
           processExecution.push({ file: rel, module: required, callee: '*' });
         }
 
@@ -789,9 +955,7 @@ export function buildSnapshot() {
   const codeFiles = [
     ...walkFiles(join(ROOT, 'src')),
     ...walkFiles(join(ROOT, 'bin')),
-    ...walkFiles(join(ROOT, 'scripts')).filter(
-      (path) => !path.endsWith('mcp-security-snapshot.mjs')
-    ),
+    ...walkFiles(join(ROOT, 'scripts')),
   ];
 
   const scan = scanCode(codeFiles);
