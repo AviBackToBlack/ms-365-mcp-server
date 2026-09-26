@@ -178,6 +178,8 @@ describe('--attachment-port (split attachment listener)', () => {
       );
 
       expect(response.status).toBe(200);
+      expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+      expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
       expect(response.headers.get('content-type')).toBe('application/pdf');
       expect(response.headers.get('content-disposition')).toBe('attachment; filename="report.pdf"');
       expect(await response.text()).toBe(ATTACHMENT_BODY);
