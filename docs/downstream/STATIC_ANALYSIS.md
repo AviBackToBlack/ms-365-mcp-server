@@ -39,8 +39,7 @@ Experimental MCP-specific Semgrep rules are also not a blocking SM-3 input. A di
 run against Semgrep rules commit `a84ff9cc2453ca91d581380de4b8b3f272f6f4be` found that
 the current MCP SSRF rule has an unconstrained `$AXIOS($URL, ...)` sink that matches
 arbitrary function calls, including non-network calls. MCP-specific policy therefore
-remains a separate SM-6 concern where those rules can be validated or adapted before
-enforcement.
+is handled by SM-4, where MCP-specific rules and source-surface policy can be validated or adapted before enforcement.
 
 ## Secret and entropy scanning
 
