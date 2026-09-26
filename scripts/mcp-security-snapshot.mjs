@@ -514,6 +514,36 @@ export function compareSnapshots(expected, actual) {
   return changes;
 }
 
+export function describeBaselineDelta(before, after) {
+  const lines = compareSnapshots(before, after);
+
+  for (const field of [
+    'graphScopes',
+    'implicitAuthScopes',
+    'cloudNetworkHosts',
+    'networkUrlEnvVars',
+    'writeCapableTools',
+  ]) {
+    const delta = diffSet(before[field] ?? [], after[field] ?? []);
+    if (delta.added.length) lines.push(`${field} added: ${delta.added.join(', ')}`);
+    if (delta.removed.length) lines.push(`${field} removed: ${delta.removed.join(', ')}`);
+  }
+
+  for (const [field, keyFields] of [
+    ['processExecution', ['file', 'module', 'callee']],
+    ['filesystemWrites', ['file', 'callee']],
+    ['dynamicImports', ['file', 'specifier']],
+  ]) {
+    const beforeKeys = [...keys(before[field] ?? [], keyFields)].sort();
+    const afterKeys = [...keys(after[field] ?? [], keyFields)].sort();
+    const delta = diffSet(beforeKeys, afterKeys);
+    if (delta.added.length) lines.push(`${field} added: ${delta.added.join(', ')}`);
+    if (delta.removed.length) lines.push(`${field} removed: ${delta.removed.join(', ')}`);
+  }
+
+  return [...new Set(lines)];
+}
+
 function writeSummary(lines) {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) return;
@@ -523,6 +553,27 @@ function writeSummary(lines) {
 
 function main() {
   const mode = process.argv[2] ?? '--check';
+
+  if (mode === '--report-diff') {
+    const beforePath = process.argv[3];
+    if (!beforePath) {
+      console.error('usage: node scripts/mcp-security-snapshot.mjs --report-diff <baseline.json>');
+      process.exit(2);
+    }
+    const before = readJson(beforePath);
+    const after = readJson(BASELINE_PATH);
+    const delta = describeBaselineDelta(before, after);
+    if (!delta.length) {
+      console.log('MCP security baseline delta: none');
+      writeSummary(['baseline delta vs base: none']);
+      return;
+    }
+    console.log('MCP security baseline delta vs base:');
+    for (const line of delta) console.log(`- ${line}`);
+    writeSummary(['baseline delta vs base:', ...delta]);
+    return;
+  }
+
   const snapshot = buildSnapshot();
 
   if (mode === '--write') {
@@ -532,7 +583,7 @@ function main() {
   }
 
   if (mode !== '--check') {
-    console.error('usage: node scripts/mcp-security-snapshot.mjs [--check|--write]');
+    console.error('usage: node scripts/mcp-security-snapshot.mjs [--check|--write|--report-diff <baseline.json>]');
     process.exit(2);
   }
 
