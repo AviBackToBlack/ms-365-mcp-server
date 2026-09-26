@@ -53,7 +53,7 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
         // the failure `verify login` reports are what surface it (issue #648).
         const text = await new Promise<string>((resolve, reject) => {
           authManager.acquireTokenByDeviceCode(resolve).catch((error: Error) => {
-            logger.error(`Device code login failed after the code was issued: ${error.message}`);
+            logger.error('Device code login failed after the code was issued');
             reject(error);
           });
         });
