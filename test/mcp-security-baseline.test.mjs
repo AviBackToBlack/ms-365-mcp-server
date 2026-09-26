@@ -71,7 +71,10 @@ describe('MCP security baseline', () => {
 
   it('rejects new or non-literal dynamic loading and dynamic code execution', () => {
     const importSnapshot = clone(baseline);
-    importSnapshot.dynamicImports.push({ file: 'src/new-runtime.ts', specifier: 'surprise-package' });
+    importSnapshot.dynamicImports.push({
+      file: 'src/new-runtime.ts',
+      specifier: 'surprise-package',
+    });
     expect(validatePolicy(importSnapshot, policy).join('\n')).toContain(
       'unapproved dynamic import: src/new-runtime.ts|surprise-package'
     );
