@@ -12,6 +12,11 @@ const failures = [];
 const fail = (message) => failures.push(message);
 const lockSha256 = createHash('sha256').update(lockBytes).digest('hex');
 
+const expectedNodeVersion = `v${policy.verificationToolchain.nodeVersion}`;
+if (process.version !== expectedNodeVersion) {
+  fail(`Node version ${process.version} != approved ${expectedNodeVersion}`);
+}
+
 if (lock.lockfileVersion !== policy.lockfile.lockfileVersion) {
   fail(`lockfileVersion ${lock.lockfileVersion} != expected ${policy.lockfile.lockfileVersion}`);
 }
