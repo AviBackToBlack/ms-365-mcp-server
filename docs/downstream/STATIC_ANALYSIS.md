@@ -58,6 +58,8 @@ exceptions are for a synthetic JWT fixture, Azure built-in role definition GUIDs
 Microsoft public client application identifier, and a synthetic bearer token in
 documentation. Future occurrences in those files are not exempt.
 
+SM-4 adds one semantic exception for `downstream/mcp-security-baseline.json`: the `generic-api-key` rule may ignore a value only when it is exactly a 64-character lowercase hexadecimal SHA-256 fingerprint. The exception is constrained by rule + path + value shape and exists because the baseline intentionally stores cryptographic file/tool fingerprints.
+
 ## Runtime hardening found during baseline establishment
 
 The initial Semgrep discovery scan identified AES-GCM decryption without an explicit
