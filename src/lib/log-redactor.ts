@@ -21,7 +21,7 @@ interface RedactionPattern {
 
 // Ordered most-specific first. JWTs are matched before generic token fields so
 // a `access_token=eyJ...` collapses to a single JWT marker rather than nesting.
-const REDACTIONS: RedactionPattern[] = [
+const SECRET_REDACTIONS: RedactionPattern[] = [
   // JSON Web Tokens (header.payload.signature) — access_token, id_token, etc.
   {
     pattern: /eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g,
@@ -47,12 +47,23 @@ const REDACTIONS: RedactionPattern[] = [
     pattern: /([?&]code=)[^&\s"']+/gi,
     replacement: '$1[REDACTED]',
   },
+];
+
+const PII_REDACTIONS: RedactionPattern[] = [
   // Email addresses / UPNs
   {
     pattern: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
     replacement: '[REDACTED_EMAIL]',
   },
 ];
+
+function applyRedactions(input: string, patterns: RedactionPattern[]): string {
+  let out = input;
+  for (const { pattern, replacement } of patterns) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
 
 /**
  * Whether PII/secret redaction is enabled. On by default; set
@@ -64,11 +75,21 @@ export function redactionEnabled(): boolean {
   return raw !== 'false' && raw !== '0';
 }
 
-/** Applies every redaction pattern to `input` and returns the scrubbed string. */
+/** Always removes credential material, even when optional PII redaction is disabled. */
+export function redactSecrets(input: string): string {
+  return applyRedactions(input, SECRET_REDACTIONS);
+}
+
+/** Applies secret + PII redaction unconditionally. Useful for explicitly sensitive output. */
 export function redactSensitive(input: string): string {
-  let out = input;
-  for (const { pattern, replacement } of REDACTIONS) {
-    out = out.replace(pattern, replacement);
-  }
-  return out;
+  return applyRedactions(redactSecrets(input), PII_REDACTIONS);
+}
+
+/**
+ * Redaction policy for operational logs: credentials are never loggable; the operator
+ * opt-out controls only PII such as email/UPN values.
+ */
+export function redactForLog(input: string): string {
+  const secretSafe = redactSecrets(input);
+  return redactionEnabled() ? applyRedactions(secretSafe, PII_REDACTIONS) : secretSafe;
 }
