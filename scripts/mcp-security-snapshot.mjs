@@ -120,6 +120,7 @@ function scanCode(files) {
   const dynamicCode = [];
   const filesystemWrites = [];
   const staticUrlHosts = new Set();
+  const networkUrlEnvVars = new Set();
 
   for (const path of files) {
     const source = readFileSync(path, 'utf8');
@@ -139,10 +140,13 @@ function scanCode(files) {
       if (CHILD_PROCESS_MODULES.has(mod)) {
         if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
-            childImports.set(el.name.text, el.propertyName?.text ?? el.name.text);
+            const imported = el.propertyName?.text ?? el.name.text;
+            childImports.set(el.name.text, imported);
+            processExecution.push({ file: rel, module: mod, callee: imported });
           }
         } else if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
           childNamespaces.add(clause.namedBindings.name.text);
+          processExecution.push({ file: rel, module: mod, callee: '*' });
         }
       }
 
@@ -171,6 +175,18 @@ function scanCode(files) {
     function visit(node) {
       if (ts.isStringLiteralLike(node) && NETWORK_FILES.includes(rel)) {
         recordHost(node.text);
+      }
+
+      if (
+        NETWORK_FILES.includes(rel) &&
+        ts.isPropertyAccessExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === 'process' &&
+        node.expression.name.text === 'env' &&
+        /URL/.test(node.name.text)
+      ) {
+        networkUrlEnvVars.add(node.name.text);
       }
 
       if (ts.isCallExpression(node)) {
@@ -244,6 +260,7 @@ function scanCode(files) {
     dynamicCode: uniq(dynamicCode, (x) => `${x.file}:${x.kind}`),
     filesystemWrites: uniq(filesystemWrites, (x) => `${x.file}:${x.callee}`),
     staticUrlHosts: [...staticUrlHosts].sort(),
+    networkUrlEnvVars: [...networkUrlEnvVars].sort(),
   };
 }
 
@@ -294,6 +311,7 @@ export function buildSnapshot() {
     writeCapableTools: [...new Set(writeCapableTools)].sort(),
     toolFingerprints,
     staticUrlHosts: scan.staticUrlHosts,
+    networkUrlEnvVars: scan.networkUrlEnvVars,
     processExecution: scan.processExecution,
     dynamicImports: scan.dynamicImports,
     nonLiteralDynamicImports: scan.nonLiteralDynamicImports,
@@ -394,6 +412,7 @@ export function compareSnapshots(expected, actual) {
     'writeLikeScopes',
     'writeCapableTools',
     'staticUrlHosts',
+    'networkUrlEnvVars',
     'processExecution',
     'dynamicImports',
     'nonLiteralDynamicImports',
@@ -454,7 +473,8 @@ function main() {
     `Graph scopes: ${snapshot.graphScopes.length}`,
     `write-capable tools: ${snapshot.writeCapableTools.length}`,
     `static URL hosts: ${snapshot.staticUrlHosts.length}`,
-    `process execution sites: ${snapshot.processExecution.length}`,
+    `URL-bearing network env vars: ${snapshot.networkUrlEnvVars.length}`,
+    `process execution capabilities: ${snapshot.processExecution.length}`,
     `filesystem write sites: ${snapshot.filesystemWrites.length}`,
     `dynamic imports: ${snapshot.dynamicImports.length}`,
     `generated schema coverage: ${snapshot.generatedSchemaCoverage.status}`,
