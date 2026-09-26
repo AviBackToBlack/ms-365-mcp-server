@@ -64,7 +64,7 @@ function additionalData(purpose: string): Buffer {
 
 export function encryptCache(plaintext: string, key: Buffer, purpose: string): string {
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
+  const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
   cipher.setAAD(additionalData(purpose));
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const envelope: EncryptedEnvelope = {
@@ -120,7 +120,7 @@ export function decryptCache(raw: string, key: Buffer, purpose: string): string 
     throw new Error('Auth cache envelope has a malformed iv or tag');
   }
 
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_BYTES });
   decipher.setAAD(additionalData(purpose));
   decipher.setAuthTag(tag);
   return Buffer.concat([
