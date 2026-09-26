@@ -196,7 +196,10 @@ function scanCode(files) {
           if (arg && ts.isStringLiteralLike(arg)) {
             dynamicImports.push({ file: rel, specifier: arg.text });
           } else {
-            nonLiteralDynamicImports.push({ file: rel, expression: arg?.getText(sf) ?? '<missing>' });
+            nonLiteralDynamicImports.push({
+              file: rel,
+              expression: arg?.getText(sf) ?? '<missing>',
+            });
           }
         }
 
@@ -224,7 +227,11 @@ function scanCode(files) {
         } else if (ts.isPropertyAccessExpression(node.expression)) {
           const owner = node.expression.expression;
           const callee = node.expression.name.text;
-          if (ts.isIdentifier(owner) && fsNamespaces.has(owner.text) && FS_WRITE_CALLEES.has(callee)) {
+          if (
+            ts.isIdentifier(owner) &&
+            fsNamespaces.has(owner.text) &&
+            FS_WRITE_CALLEES.has(callee)
+          ) {
             filesystemWrites.push({ file: rel, callee });
           } else if (FS_WRITE_CALLEES.has(callee)) {
             filesystemWrites.push({ file: rel, callee });
@@ -254,18 +261,13 @@ function scanCode(files) {
   return {
     processExecution: uniq(processExecution, (x) => `${x.file}:${x.module}:${x.callee}`),
     dynamicImports: uniq(dynamicImports, (x) => `${x.file}:${x.specifier}`),
-    nonLiteralDynamicImports: uniq(
-      nonLiteralDynamicImports,
-      (x) => `${x.file}:${x.expression}`
-    ),
+    nonLiteralDynamicImports: uniq(nonLiteralDynamicImports, (x) => `${x.file}:${x.expression}`),
     dynamicCode: uniq(dynamicCode, (x) => `${x.file}:${x.kind}`),
     filesystemWrites: uniq(filesystemWrites, (x) => `${x.file}:${x.callee}`),
     staticUrlHosts: [...staticUrlHosts].sort(),
     networkUrlEnvVars: [...networkUrlEnvVars].sort(),
   };
 }
-
-
 
 function extractImplicitAuthScopes() {
   const path = 'src/server.ts';
@@ -357,9 +359,7 @@ export function buildSnapshot() {
       reason:
         'src/generated/client.ts is generated from mutable Microsoft Graph OpenAPI input and is not tracked; complete generated tool-schema fingerprinting becomes deterministic only after SM-5 pins the generation inputs.',
     },
-    criticalFileSha256: Object.fromEntries(
-      CRITICAL_FILES.map((path) => [path, sha256File(path)])
-    ),
+    criticalFileSha256: Object.fromEntries(CRITICAL_FILES.map((path) => [path, sha256File(path)])),
     mcpInstructionsSha256: sha256File('src/mcp-instructions.ts'),
     endpointsSha256: sha256File('src/endpoints.json'),
     endpointCount: endpoints.length,
@@ -401,7 +401,8 @@ function diffSet(expected, actual) {
 export function validatePolicy(snapshot, policy) {
   const failures = [];
 
-  if (policy.schemaVersion !== 1) failures.push(`unsupported policy schemaVersion ${policy.schemaVersion}`);
+  if (policy.schemaVersion !== 1)
+    failures.push(`unsupported policy schemaVersion ${policy.schemaVersion}`);
 
   const graphScopeDiff = diffSet(policy.approvedGraphScopes, snapshot.graphScopes);
   if (graphScopeDiff.added.length) {
@@ -454,13 +455,7 @@ export function validatePolicy(snapshot, policy) {
     mode: 'stdio',
     orgMode: true,
     readOnly: true,
-    allowedScopes: [
-      'User.Read',
-      'Mail.Read',
-      'Calendars.Read',
-      'Chat.Read',
-      'Team.ReadBasic.All',
-    ],
+    allowedScopes: ['User.Read', 'Mail.Read', 'Calendars.Read', 'Chat.Read', 'Team.ReadBasic.All'],
   };
   if (stableJson(policy.productionProfile) !== stableJson(expectedProfile)) {
     failures.push('productionProfile differs from the approved first-production contract');
@@ -474,7 +469,9 @@ export function compareSnapshots(expected, actual) {
   const expectedTools = expected.toolFingerprints ?? {};
   const actualTools = actual.toolFingerprints ?? {};
 
-  const toolKeys = [...new Set([...Object.keys(expectedTools), ...Object.keys(actualTools)])].sort();
+  const toolKeys = [
+    ...new Set([...Object.keys(expectedTools), ...Object.keys(actualTools)]),
+  ].sort();
   const changedTools = toolKeys.filter((key) => expectedTools[key] !== actualTools[key]);
   if (changedTools.length) changes.push(`tool metadata changed: ${changedTools.join(', ')}`);
 
@@ -501,10 +498,12 @@ export function compareSnapshots(expected, actual) {
     if (expected[field] !== actual[field]) changes.push(`${field} changed`);
   }
 
-  const fileKeys = [...new Set([
-    ...Object.keys(expected.criticalFileSha256 ?? {}),
-    ...Object.keys(actual.criticalFileSha256 ?? {}),
-  ])].sort();
+  const fileKeys = [
+    ...new Set([
+      ...Object.keys(expected.criticalFileSha256 ?? {}),
+      ...Object.keys(actual.criticalFileSha256 ?? {}),
+    ]),
+  ].sort();
   for (const file of fileKeys) {
     if (expected.criticalFileSha256?.[file] !== actual.criticalFileSha256?.[file]) {
       changes.push(`critical file changed: ${file}`);
@@ -583,7 +582,9 @@ function main() {
   }
 
   if (mode !== '--check') {
-    console.error('usage: node scripts/mcp-security-snapshot.mjs [--check|--write|--report-diff <baseline.json>]');
+    console.error(
+      'usage: node scripts/mcp-security-snapshot.mjs [--check|--write|--report-diff <baseline.json>]'
+    );
     process.exit(2);
   }
 
