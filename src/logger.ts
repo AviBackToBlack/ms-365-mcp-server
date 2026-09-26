@@ -3,15 +3,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
-import { redactionEnabled, redactSensitive } from './lib/log-redactor.js';
+import { redactForLog } from './lib/log-redactor.js';
 
-// PII/secret redaction (MS365_MCP_REDACT_PII), on by default. Runs before
-// the printf so both file and console transports emit scrubbed messages.
-// Set MS365_MCP_REDACT_PII=false to opt out and get fully verbose logs.
+// Credential redaction is unconditional. PII redaction (MS365_MCP_REDACT_PII)
+// is on by default and may be disabled for local diagnostics. Runs before the
+// printf so both file and console transports receive the same scrubbed message.
 const redactFormat = winston.format((info) => {
-  if (!redactionEnabled()) return info;
   if (typeof info.message === 'string') {
-    info.message = redactSensitive(info.message);
+    info.message = redactForLog(info.message);
   }
   return info;
 });
