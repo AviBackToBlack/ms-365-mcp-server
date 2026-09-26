@@ -95,6 +95,8 @@ v<upstream-version>-abtb.<revision>
 
 Example: `v0.156.2-abtb.1`.
 
+This scheme is provisional until the downstream release pipeline is implemented. Under SemVer, `0.156.2-abtb.1` is a prerelease of `0.156.2` and therefore sorts below the upstream release. The release milestone must explicitly validate the chosen versioning scheme against every distribution mechanism we use (including npm dist-tags/ranges, if npm publication is retained) rather than relying on intuitive ordering.
+
 A release tag identifies an exact approved downstream source commit. Runtime installation must use an immutable downstream artifact by digest, never `npx ...@latest` and never runtime npm dependency resolution.
 
 ## Build model
@@ -129,6 +131,8 @@ AUDIT_RESULT
 ```
 
 GitHub OIDC artifact attestations are preferred for CI artifact provenance. Developer commit signing and CI artifact attestation are separate controls.
+
+Package contents are also part of the release contract. Before the first downstream package is published, the release milestone must replace accidental npm inclusion behavior with an explicit package-content allowlist/verification step. Evidence that is intended to travel with the artifact must be deliberately included; repository-only architecture material must not be included merely because npm's default file selection happens to pick it up.
 
 ## Security gates
 
@@ -170,6 +174,8 @@ For a repository owned by a GitHub personal account, collaborator access is not 
 The upstream release workflow is not our release mechanism.
 
 Until it is replaced by the downstream release pipeline, this fork carries a repository-identity guard so the upstream publisher jobs cannot run in `AviBackToBlack/ms-365-mcp-server`.
+
+That guard is currently per job, so controlled upstream sync must treat publisher-workflow changes as a fail-closed security surface. The security/upstream-sync gates must reject or require explicit approval for any inherited workflow that introduces a publishing-capable job or sensitive write permission (for example `id-token: write`, `packages: write`, or equivalent) without the downstream repository-identity guard. This is intentionally stronger than assuming today's three guarded jobs remain the complete publishing surface forever.
 
 The downstream release pipeline will be introduced separately and will build, attest, hash, and publish only approved downstream artifacts.
 
