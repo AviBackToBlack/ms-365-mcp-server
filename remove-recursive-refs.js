@@ -272,7 +272,7 @@ async function removeRecursiveRefs() {
 
     const remainingRefTypes = new Set();
     cleanedString.match(/"#\/definitions\/[^"]+"/g)?.forEach((ref) => {
-      const defName = ref.split('/').pop()?.replace('"', '');
+      const defName = ref.split('/').pop()?.replaceAll('"', '');
       if (defName) remainingRefTypes.add(defName);
     });
 
