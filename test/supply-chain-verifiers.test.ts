@@ -27,10 +27,7 @@ afterEach(() => {
 describe('supply-chain verifier fail-closed behavior', () => {
   it('rejects a tampered lockfile hash', () => {
     const dir = makeTempRepo();
-    const policy = readFileSync(
-      join(repoRoot, 'downstream', 'supply-chain-policy.json'),
-      'utf8'
-    );
+    const policy = readFileSync(join(repoRoot, 'downstream', 'supply-chain-policy.json'), 'utf8');
     const lock = readFileSync(join(repoRoot, 'package-lock.json'), 'utf8');
 
     writeFileSync(join(dir, 'downstream', 'supply-chain-policy.json'), policy);
@@ -47,10 +44,7 @@ describe('supply-chain verifier fail-closed behavior', () => {
 
   it('rejects an unapproved npm advisory', () => {
     const dir = makeTempRepo();
-    const policy = readFileSync(
-      join(repoRoot, 'downstream', 'supply-chain-policy.json'),
-      'utf8'
-    );
+    const policy = readFileSync(join(repoRoot, 'downstream', 'supply-chain-policy.json'), 'utf8');
 
     writeFileSync(join(dir, 'downstream', 'supply-chain-policy.json'), policy);
     writeFileSync(
