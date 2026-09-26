@@ -35,7 +35,7 @@ The baseline contains:
 - SHA-256 for `src/endpoints.json`;
 - one stable fingerprint per Graph tool, keyed by tool name + HTTP method + path;
 - endpoint count and the complete write-capable tool-name set;
-- SHA-256 for security-critical auth, network, logging, CLI, server, and token-cache source files.
+- SHA-256 for every non-generated, non-test source file under `src/`, plus `src/endpoints.json` and the MCP security verifier itself.
 
 A description, scope, path, method, request-body override, `llmTip`, preset, or other tracked endpoint metadata therefore changes the affected tool fingerprint. CI reports that tool key in the security delta.
 
@@ -47,12 +47,12 @@ The baseline inventories every `scopes` and `workScopes` value in `src/endpoints
 
 The current source contains 71 distinct endpoint scopes. The policy allowlist means a newly introduced Graph permission fails CI until the policy is intentionally updated in a reviewed PR.
 
-OAuth-layer scopes are inventoried separately. The current HTTP/OAuth path implicitly adds:
+OAuth-layer scopes are inventoried separately by following the `Set` whose value is serialized into the OAuth `scope` query parameter; the extractor does not depend on the local variable name. The current HTTP/OAuth path implicitly adds:
 
 - `User.Read`
 - `offline_access`
 
-This separation prevents an auth-layer permission change from hiding behind an unchanged endpoint catalog.
+This separation prevents an auth-layer permission change from hiding behind an unchanged endpoint catalog. The policy is exact for this inventory: additions and removals both require an intentional policy update, and an unexpectedly empty implicit-scope inventory fails closed.
 
 The approved **first production profile** remains narrower than the capabilities present in source:
 
@@ -65,19 +65,21 @@ stdio
 
 The broad source-level scope allowlist does **not** authorize those scopes for production. It only says that their presence in the codebase has been reviewed. Runtime promotion remains constrained by the production profile.
 
+The first-production profile is intentionally represented twice: declaratively in policy and independently as a verifier invariant. This is deliberate dual control rather than accidental duplication; changing the production contract requires changing both under review. The `reason` and `productionProfileAllowed` fields on capability entries are documentary review metadata, not runtime enforcement switches.
+
 ## Network destination surface
 
 The gate distinguishes three concepts:
 
 - `cloudNetworkHosts`: the `authority` and `graphApi` destinations from cloud configuration; these are fail-closed policy.
-- `networkUrlEnvVars`: URL-bearing environment inputs in network-critical code; new ones are fail-closed policy.
+- `networkUrlEnvVars`: URL/URI/endpoint/host/origin environment inputs discovered across all scanned source files, including direct `process.env.X`, string element access, and aliases/default parameters rooted in `process.env`; new ones are fail-closed policy.
 - `staticUrlHosts`: a conservative inventory of URL literals in network-critical files, including non-destination literals such as localhost callbacks or Azure portal references. Changes are review-visible baseline drift but are not mislabeled as confirmed outbound traffic.
 
-The current approved cloud network hosts are the Microsoft global and China login/Graph endpoints. The current dynamic URL input is `MS365_MCP_KEYVAULT_URL`, which is not part of the first production profile.
+The current approved cloud network hosts are the Microsoft global and China login/Graph endpoints. The reviewed environment-controlled network surface currently includes `MS365_MCP_KEYVAULT_URL`, `MS365_MCP_PUBLIC_URL`, `MS365_MCP_BASE_URL`, `MS365_MCP_ALLOWED_REDIRECT_URIS`, `MS365_MCP_ATTACHMENT_URL_BASE`, `MS365_MCP_ATTACHMENT_HOST`, and `MS365_MCP_CORS_ORIGIN`. Their presence in source does not make them part of the first production profile.
 
 ## Process execution, dynamic code, and dynamic imports
 
-Any import of `child_process` / `node:child_process` is treated as a process-execution capability even when the imported function is dependency-injected or aliased.
+Any named, namespace, or default import of `child_process` / `node:child_process` is treated as a process-execution capability. CommonJS-style `require()` and ESM `createRequire()` bindings are inventoried too, including destructured callees and namespace-style calls.
 
 Current reviewed capabilities are:
 
@@ -86,7 +88,7 @@ Current reviewed capabilities are:
 
 Neither process-execution capability is part of the first production runtime profile.
 
-Literal dynamic imports are allowlisted by file + package specifier. Non-literal dynamic imports, `eval`, and `new Function` fail unconditionally.
+Literal dynamic imports are allowlisted by file + package specifier. Non-literal dynamic imports fail unconditionally. Direct `eval` / `Function` calls and constructors, `globalThis.eval` / `globalThis.Function`, string element access on `globalThis`, comma-indirect calls, and simple aliases/assignments are all classified as forbidden dynamic code. Generic static analysis remains a backstop for more exotic indirection.
 
 ## Filesystem write surface
 
