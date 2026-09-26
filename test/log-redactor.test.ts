@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { redactSensitive, redactionEnabled } from '../src/lib/log-redactor.js';
+import { redactForLog, redactSensitive, redactionEnabled } from '../src/lib/log-redactor.js';
 
 describe('redactSensitive', () => {
   const JWT =
@@ -96,5 +96,30 @@ describe('redactionEnabled', () => {
   it('is on for any other value', () => {
     process.env.MS365_MCP_REDACT_PII = 'yes';
     expect(redactionEnabled()).toBe(true);
+  });
+});
+
+
+describe('redactForLog', () => {
+  const prev = process.env.MS365_MCP_REDACT_PII;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.MS365_MCP_REDACT_PII;
+    else process.env.MS365_MCP_REDACT_PII = prev;
+  });
+
+  it('never exposes credentials when PII redaction is disabled', () => {
+    process.env.MS365_MCP_REDACT_PII = 'false';
+    const out = redactForLog(
+      'user alice@example.org Authorization: Bearer secret-token access_token=abc123'
+    );
+    expect(out).toContain('alice@example.org');
+    expect(out).not.toContain('secret-token');
+    expect(out).not.toContain('abc123');
+    expect(out).toContain('[REDACTED]');
+  });
+
+  it('still redacts PII by default', () => {
+    delete process.env.MS365_MCP_REDACT_PII;
+    expect(redactForLog('alice@example.org')).toBe('[REDACTED_EMAIL]');
   });
 });
