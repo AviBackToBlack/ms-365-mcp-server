@@ -83,10 +83,7 @@ describe('supply-chain verifier fail-closed behavior', () => {
     const lock = readFileSync(join(repoRoot, 'package-lock.json'), 'utf8');
 
     policy.verificationToolchain.nodeVersion = '0.0.0';
-    writeFileSync(
-      join(dir, 'downstream', 'supply-chain-policy.json'),
-      JSON.stringify(policy)
-    );
+    writeFileSync(join(dir, 'downstream', 'supply-chain-policy.json'), JSON.stringify(policy));
     writeFileSync(join(dir, 'package-lock.json'), lock);
 
     const result = spawnSync(process.execPath, [verifySupplyChain], {
