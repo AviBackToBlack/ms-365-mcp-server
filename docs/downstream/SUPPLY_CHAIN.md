@@ -11,11 +11,11 @@ The supply-chain workflow verifies the exact `package-lock.json` against `downst
 - a non-bundled package resolves outside `https://registry.npmjs.org/`;
 - a registry-resolved package lacks SHA-512 integrity metadata;
 - the set of packages declaring install scripts changes;
-- the pinned verification npm version changes;
+- the pinned verification Node or npm version changes;
 - `npm audit` reports any advisory not explicitly listed in the policy;
 - a registry package signature or available provenance attestation fails verification.
 
-Dependency installation for this gate uses `npm ci --ignore-scripts`. The gate therefore downloads the locked dependency tree without executing dependency lifecycle scripts before it has checked the approved install-script surface.
+The gate runs on pull requests and again on pushes to `main`, so the merged state is re-verified rather than assuming the PR test result still describes the post-merge tree. Dependency installation for this gate uses `npm ci --ignore-scripts`. The gate therefore downloads the locked dependency tree without executing dependency lifecycle scripts before it has checked the approved install-script surface.
 
 ## Registry signatures and attestations
 
@@ -48,3 +48,7 @@ A dependency update is not complete merely because `package-lock.json` changed.
 The change must intentionally update the policy when necessary, explain any new install-script package or vulnerability exception, pass registry signature verification, and pass the normal project build/test workflow.
 
 SBOM generation, downstream artifact attestation, and release provenance remain out of scope for SM-2 and are handled by their later milestones.
+
+## Gate self-tests
+
+The repository test suite includes negative fixtures for the supply-chain verifiers. The tests require a tampered lockfile hash and an unapproved advisory to fail closed. This is intentionally minimal coverage of the security boundary rather than exhaustive testing of npm itself.
