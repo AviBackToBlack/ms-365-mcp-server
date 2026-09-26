@@ -21,10 +21,10 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function scanFixture(source) {
+function scanFixture(source, extension = '.ts') {
   const dir = mkdtempSync(join(tmpdir(), 'mcp-security-fixture-'));
   tempDirs.push(dir);
-  const path = join(dir, 'fixture.ts');
+  const path = join(dir, 'fixture' + extension);
   writeFileSync(path, source);
   return scanCode([path]);
 }
@@ -194,7 +194,7 @@ describe('MCP security baseline', () => {
     );
   });
 
-  it('hashes the full non-generated runtime source surface and the verifier itself', () => {
+  it('hashes the reviewed runtime source surface and the verifier itself', () => {
     const snapshot = buildSnapshot();
     for (const path of [
       'scripts/mcp-security-snapshot.mjs',
@@ -208,6 +208,139 @@ describe('MCP security baseline', () => {
     ]) {
       expect(snapshot.criticalFileSha256[path]).toMatch(/^[0-9a-f]{64}$/);
     }
+  });
+
+  it('detects casted/imported/destructured/helper env inputs and plural suffixes', () => {
+    const scan = scanFixture(
+      [
+        "import { env as importedEnv } from 'node:process';",
+        'const castEnv = process.env as NodeJS.ProcessEnv;',
+        'const satisfiesEnv = process.env satisfies NodeJS.ProcessEnv;',
+        'const parenEnv = (process.env);',
+        'const { env: destructuredEnv } = process;',
+        'const a = castEnv.MS365_MCP_PROXY_URLS;',
+        'const b = parenEnv.MS365_MCP_PROXY_HOSTS;',
+        'const b2 = satisfiesEnv.MS365_MCP_PROXY_ENDPOINTS;',
+        'const c = importedEnv.MS365_MCP_API_ENDPOINTS;',
+        'const d = destructuredEnv.MS365_MCP_LOGIN_ORIGINS;',
+        'function helper(env) { return env.MS365_MCP_HELPER_URL; }',
+        'function destructured({ MS365_MCP_HELPER_URIS }) { return MS365_MCP_HELPER_URIS; }',
+      ].join('\n')
+    );
+
+    expect(scan.networkUrlEnvVars).toEqual([
+      'MS365_MCP_API_ENDPOINTS',
+      'MS365_MCP_HELPER_URIS',
+      'MS365_MCP_HELPER_URL',
+      'MS365_MCP_LOGIN_ORIGINS',
+      'MS365_MCP_PROXY_ENDPOINTS',
+      'MS365_MCP_PROXY_HOSTS',
+      'MS365_MCP_PROXY_URLS',
+    ]);
+  });
+
+  it('detects getBuiltinModule, module.createRequire, casted require and require aliases', () => {
+    const scan = scanFixture(
+      [
+        "import module from 'node:module';",
+        'const req = module.createRequire(import.meta.url);',
+        'const req2 = req;',
+        "const cp = (req2('node:child_process') as any);",
+        "cp.execSync('echo safe-fixture');",
+        "const { execFileSync } = process.getBuiltinModule('child_process');",
+        "execFileSync('echo', ['safe-fixture']);",
+        "const { createRequire: makeRequire } = require('module');",
+        'const req3 = makeRequire(import.meta.url);',
+        "const { spawnSync } = req3('child_process');",
+        "spawnSync('echo', ['safe-fixture']);",
+        "process.getBuiltinModule('node:child_process').exec('echo safe-fixture');",
+      ].join('\n')
+    );
+
+    for (const callee of ['execSync', 'execFileSync', 'spawnSync', 'exec']) {
+      expect(scan.processExecution.some((site) => site.callee === callee)).toBe(true);
+    }
+  });
+
+  it('detects TypeScript import-equals and child_process re-exports', () => {
+    const importEquals = scanFixture(
+      ["import cp = require('child_process');", "cp.execSync('echo safe-fixture');"].join('\n'),
+      '.cts'
+    );
+    expect(importEquals.processExecution.some((site) => site.callee === '*')).toBe(true);
+    expect(importEquals.processExecution.some((site) => site.callee === 'execSync')).toBe(true);
+
+    const reexport = scanFixture("export { execSync as run } from 'child_process';");
+    expect(reexport.processExecution.some((site) => site.callee === 'execSync')).toBe(true);
+
+    const exportAll = scanFixture("export * from 'node:child_process';");
+    expect(exportAll.processExecution.some((site) => site.callee === '*')).toBe(true);
+  });
+
+  it('ignores type-only builtin imports', () => {
+    const scan = scanFixture(
+      ["import type cp from 'child_process';", "import type * as fs from 'node:fs';"].join('\n')
+    );
+    expect(scan.processExecution).toEqual([]);
+    expect(scan.filesystemWrites).toEqual([]);
+  });
+
+  it('detects dynamic-code call/apply/bind and Reflect.apply forms', () => {
+    const scan = scanFixture(
+      [
+        "eval.call(null, '1');",
+        "eval.apply(null, ['1']);",
+        "Function.bind(null, 'return 1');",
+        "Reflect.apply(eval, null, ['1']);",
+      ].join('\n')
+    );
+    const kinds = scan.dynamicCode.map((entry) => entry.kind);
+    expect(kinds).toContain('call eval');
+    expect(kinds).toContain('apply eval');
+    expect(kinds).toContain('bind Function');
+    expect(kinds).toContain('Reflect.apply eval');
+  });
+
+  it('extracts literal Set.add scopes and fails closed on dynamic implicit scopes', () => {
+    const literalScopes = extractImplicitAuthScopesFromSource(
+      [
+        "const granted = new Set([...baseScopes, 'User.Read']);",
+        "granted.add('offline_access');",
+        "microsoftAuthUrl.searchParams.set('scope', Array.from(granted).join(' '));",
+      ].join('\n')
+    );
+    expect(literalScopes).toEqual(['User.Read', 'offline_access']);
+
+    const dynamicScopes = extractImplicitAuthScopesFromSource(
+      [
+        "const granted = new Set([...baseScopes, 'User.Read', 'offline_access']);",
+        'granted.add(extraScope);',
+        "microsoftAuthUrl.searchParams.set('scope', Array.from(granted).join(' '));",
+      ].join('\n')
+    );
+    expect(dynamicScopes).toContain('<dynamic:extraScope>');
+
+    const snapshot = clone(baseline);
+    snapshot.implicitAuthScopes = dynamicScopes;
+    expect(validatePolicy(snapshot, policy).join('\n')).toContain(
+      'unapproved implicit auth scopes: <dynamic:extraScope>'
+    );
+  });
+
+  it('hashes tracked generated runtime files and build/security scripts', () => {
+    const snapshot = buildSnapshot();
+    for (const path of [
+      'src/generated/client-beta.ts',
+      'src/generated/endpoint-types.ts',
+      'src/generated/hack.ts',
+      'bin/modules/generate-mcp-tools.mjs',
+      'scripts/mcp-security-snapshot.mjs',
+      'scripts/verify-npm-audit.mjs',
+      'scripts/verify-supply-chain.mjs',
+    ]) {
+      expect(snapshot.criticalFileSha256[path]).toMatch(/^[0-9a-f]{64}$/);
+    }
+    expect(snapshot.criticalFileSha256['src/generated/client.ts']).toBeUndefined();
   });
 
   it('locks the first-production runtime profile', () => {
