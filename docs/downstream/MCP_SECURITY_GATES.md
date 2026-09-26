@@ -35,11 +35,13 @@ The baseline contains:
 - SHA-256 for `src/endpoints.json`;
 - one stable fingerprint per Graph tool, keyed by tool name + HTTP method + path;
 - endpoint count and the complete write-capable tool-name set;
-- SHA-256 for every non-generated, non-test source file under `src/`, plus `src/endpoints.json` and the MCP security verifier itself.
+- SHA-256 for every scanned code file under `src/`, `bin/`, and `scripts/`, plus `src/endpoints.json`. The only code exclusion is mutable, untracked `src/generated/client.ts`; tracked runtime siblings such as `client-beta.ts`, `endpoint-types.ts`, and `hack.ts` are hashed and capability-scanned.
 
 A description, scope, path, method, request-body override, `llmTip`, preset, or other tracked endpoint metadata therefore changes the affected tool fingerprint. CI reports that tool key in the security delta.
 
-Complete generated parameter-schema fingerprinting is intentionally marked `deferred-to-SM-5`. The generated Graph client is not tracked and is currently produced from mutable live Microsoft Graph OpenAPI input. Pretending that schema output is deterministic before those inputs are pinned would create false assurance.
+The source walker includes `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, and `.cjs` files and skips test directories. This keeps CJS/CTS additions inside the same capability boundary instead of silently falling outside the analyzer.
+
+Complete generated parameter-schema fingerprinting is intentionally marked `deferred-to-SM-5`. Specifically, mutable `src/generated/client.ts` is untracked and currently produced from live Microsoft Graph OpenAPI input, so that file is excluded until SM-5 pins the generation inputs. Other tracked files under `src/generated/` are normal reviewed runtime source and remain inside the SM-4 hash/capability boundary.
 
 ## Graph permission surface
 
@@ -53,6 +55,8 @@ OAuth-layer scopes are inventoried separately by following the `Set` whose value
 - `offline_access`
 
 This separation prevents an auth-layer permission change from hiding behind an unchanged endpoint catalog. The policy is exact for this inventory: additions and removals both require an intentional policy update, and an unexpectedly empty implicit-scope inventory fails closed.
+
+Literal scopes added later through `Set.add('Scope')` are inventoried as well. A non-literal implicit scope value is emitted as an explicit dynamic marker, which is unapproved by default and therefore fails closed instead of disappearing from the inventory.
 
 The approved **first production profile** remains narrower than the capabilities present in source:
 
@@ -79,7 +83,7 @@ The current approved cloud network hosts are the Microsoft global and China logi
 
 ## Process execution, dynamic code, and dynamic imports
 
-Any named, namespace, or default import of `child_process` / `node:child_process` is treated as a process-execution capability. CommonJS-style `require()` and ESM `createRequire()` bindings are inventoried too, including destructured callees and namespace-style calls.
+Any named, namespace, default, or TypeScript import-equals acquisition of `child_process` / `node:child_process` is treated as a process-execution capability. CommonJS-style `require()`, ESM `createRequire()` (named or module-namespace forms), `process.getBuiltinModule()`, re-exports, casted/parenthesized acquisitions, and require-alias chains are inventoried too.
 
 Current reviewed capabilities are:
 
@@ -88,7 +92,7 @@ Current reviewed capabilities are:
 
 Neither process-execution capability is part of the first production runtime profile.
 
-Literal dynamic imports are allowlisted by file + package specifier. Non-literal dynamic imports fail unconditionally. Direct `eval` / `Function` calls and constructors, `globalThis.eval` / `globalThis.Function`, string element access on `globalThis`, comma-indirect calls, and simple aliases/assignments are all classified as forbidden dynamic code. Generic static analysis remains a backstop for more exotic indirection.
+Literal dynamic imports are allowlisted by file + package specifier. Non-literal dynamic imports fail unconditionally. Direct `eval` / `Function` calls and constructors, `globalThis.eval` / `globalThis.Function`, string element access on `globalThis`, comma-indirect calls, simple aliases/assignments, `.call` / `.apply` / `.bind`, and `Reflect.apply` are classified as forbidden dynamic code. Generic static analysis remains a backstop for more exotic indirection.
 
 ## Filesystem write surface
 
