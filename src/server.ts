@@ -545,11 +545,19 @@ class MicrosoftGraphServer {
         app.set('trust proxy', 1);
       }
 
-      // Security headers. CSP is disabled because this server returns JSON and
-      // OAuth metadata, not HTML; HSTS assumes TLS is terminated upstream.
+      // Security headers. The API does not serve application HTML, so a deny-all CSP
+      // is safe and protects any body a browser might nevertheless try to render.
+      // HSTS assumes TLS is terminated upstream.
       app.use(
         helmet({
-          contentSecurityPolicy: false,
+          contentSecurityPolicy: {
+            directives: {
+              defaultSrc: ["'none'"],
+              baseUri: ["'none'"],
+              formAction: ["'none'"],
+              frameAncestors: ["'none'"],
+            },
+          },
           crossOriginEmbedderPolicy: false,
           hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
         })
@@ -1141,11 +1149,18 @@ class MicrosoftGraphServer {
         attachmentApp = dedicated ? express() : app;
 
         if (dedicated) {
-          // Same header policy as the MCP app; there is no reason for the two
-          // listeners to disagree about, say, nosniff.
+          // Same deny-by-default browser header policy as the MCP app; attachment
+          // content may be browser-renderable even though this listener is API-only.
           attachmentApp.use(
             helmet({
-              contentSecurityPolicy: false,
+              contentSecurityPolicy: {
+                directives: {
+                  defaultSrc: ["'none'"],
+                  baseUri: ["'none'"],
+                  formAction: ["'none'"],
+                  frameAncestors: ["'none'"],
+                },
+              },
               crossOriginEmbedderPolicy: false,
               hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
             })
