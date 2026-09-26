@@ -1,0 +1,49 @@
+name: Supply Chain Baseline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Use pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.22.1'
+          cache: npm
+
+      - name: Install locked dependencies without lifecycle scripts
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify lockfile and install-script surface
+        run: node scripts/verify-supply-chain.mjs
+
+      - name: Verify vulnerability policy
+        shell: bash
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        run: |
+          set +e
+          node node_modules/npm/bin/npm-cli.js audit --package-lock-only --json > "$RUNNER_TEMP/npm-audit.json"
+          audit_rc=$?
+          set -e
+          echo "npm audit raw exit code: $audit_rc"
+          node scripts/verify-npm-audit.mjs "$RUNNER_TEMP/npm-audit.json"
+
+      - name: Verify registry signatures and available attestations
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
+        run: node node_modules/npm/bin/npm-cli.js audit signatures

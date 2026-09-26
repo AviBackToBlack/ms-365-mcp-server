@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "lockfile": {
+    "path": "package-lock.json",
+    "lockfileVersion": 3,
+    "sha256": "030c2f9e145f574797de1379442839542037ca0575ba22ff1601a581ba3cc2f4",
+    "packageCount": 916,
+    "registryPrefix": "https://registry.npmjs.org/",
+    "integrityAlgorithm": "sha512"
+  },
+  "verificationToolchain": {
+    "nodeVersion": "22.22.1",
+    "npmVersion": "11.20.0",
+    "npmLockPath": "node_modules/npm"
+  },
+  "allowedInstallScripts": [
+    {
+      "path": "node_modules/esbuild",
+      "name": "esbuild",
+      "version": "0.27.4",
+      "dev": true,
+      "optional": false,
+      "reason": "esbuild installs its platform binary; execution is disabled during supply-chain verification and only allowed during the normal build/test workflow."
+    },
+    {
+      "path": "node_modules/fsevents",
+      "name": "fsevents",
+      "version": "2.3.3",
+      "dev": true,
+      "optional": true,
+      "reason": "Optional macOS filesystem watcher native package inherited from the upstream development dependency tree."
+    },
+    {
+      "path": "node_modules/keytar",
+      "name": "keytar",
+      "version": "7.9.0",
+      "dev": false,
+      "optional": true,
+      "reason": "Optional native credential-storage dependency used by upstream authentication support."
+    }
+  ],
+  "acceptedVulnerabilities": [
+    {
+      "package": "esbuild",
+      "advisory": "GHSA-g7r4-m6w7-qqqr",
+      "url": "https://github.com/advisories/GHSA-g7r4-m6w7-qqqr",
+      "severity": "low",
+      "scope": "development",
+      "reason": "The advisory affects esbuild's development server on Windows. This repository does not invoke esbuild's serve API in build, test, or runtime paths. The fixed esbuild line is outside tsup 8.5.1's declared ^0.27.0 and tsx 4.21.0's declared ~0.27.0 dependency ranges, so forcing an override would create an unsupported dependency combination.",
+      "reviewTriggers": [
+        "the upstream toolchain permits esbuild >=0.28.1",
+        "the repository starts using esbuild serve APIs",
+        "Windows development-server use becomes part of an approved workflow",
+        "the next controlled upstream dependency refresh"
+      ]
+    }
+  ]
+}
