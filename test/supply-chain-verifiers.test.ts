@@ -19,9 +19,7 @@ function makeTempRepo(): string {
 }
 
 function readPolicy() {
-  return JSON.parse(
-    readFileSync(join(repoRoot, 'downstream', 'supply-chain-policy.json'), 'utf8')
-  );
+  return JSON.parse(readFileSync(join(repoRoot, 'downstream', 'supply-chain-policy.json'), 'utf8'));
 }
 
 function readLock() {
@@ -29,10 +27,7 @@ function readLock() {
 }
 
 function writeSupplyFixture(dir: string, policy: object, lock: object | string) {
-  writeFileSync(
-    join(dir, 'downstream', 'supply-chain-policy.json'),
-    JSON.stringify(policy)
-  );
+  writeFileSync(join(dir, 'downstream', 'supply-chain-policy.json'), JSON.stringify(policy));
   writeFileSync(
     join(dir, 'package-lock.json'),
     typeof lock === 'string' ? lock : JSON.stringify(lock)
@@ -47,10 +42,7 @@ function runSupplyVerifier(dir: string) {
 }
 
 function runAuditVerifier(dir: string, report: object | string) {
-  writeFileSync(
-    join(dir, 'downstream', 'supply-chain-policy.json'),
-    JSON.stringify(readPolicy())
-  );
+  writeFileSync(join(dir, 'downstream', 'supply-chain-policy.json'), JSON.stringify(readPolicy()));
   writeFileSync(
     join(dir, 'audit.json'),
     typeof report === 'string' ? report : JSON.stringify(report)
