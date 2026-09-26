@@ -22,7 +22,7 @@ The blocking Semgrep gate is intentionally deterministic:
 - Semgrep CLI image: `semgrep/semgrep:1.178.0`
 - OCI index digest: `sha256:32e459968daabe7ab86968184a29109b9564aa00392401156f9788452b42786b`
 - rules repository: `semgrep/semgrep-rules`
-- rules commit: `311ca4e9ba59d700624539bf658e3d29b134ee77`
+- rules commit: `a84ff9cc2453ca91d581380de4b8b3f272f6f4be`
 
 Blocking scan scope is runtime source under `src/`, excluding test fixtures. It runs
 ERROR-severity rules from:
