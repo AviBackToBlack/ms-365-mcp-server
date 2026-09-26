@@ -13,6 +13,7 @@ import {
 import { createTokenCacheStorage } from './token-cache-storage.js';
 import { dumpError, getActiveResources } from './crash-logging.js';
 import { version } from './version.js';
+import { redactForLog } from './lib/log-redactor.js';
 
 // Global crash handlers. Without these, an unhandled rejection from a dependency
 // (MSAL HTTP, keytar native, fetch in node) kills the stdio process silently
@@ -23,7 +24,7 @@ process.on('unhandledRejection', (reason) => {
     reason: dumpError(reason),
     activeResources: getActiveResources(),
   };
-  console.error('[ms365-mcp] unhandledRejection', JSON.stringify(dump));
+  console.error('[ms365-mcp] unhandledRejection', redactForLog(JSON.stringify(dump)));
   logger.error('unhandledRejection', dump);
 });
 
@@ -34,7 +35,7 @@ process.on('uncaughtException', (err, origin) => {
     error: dumpError(err),
     activeResources: getActiveResources(),
   };
-  console.error('[ms365-mcp] uncaughtException', JSON.stringify(dump));
+  console.error('[ms365-mcp] uncaughtException', redactForLog(JSON.stringify(dump)));
   logger.error('uncaughtException', dump);
 });
 
@@ -173,8 +174,9 @@ async function main(): Promise<void> {
     await server.start();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error(`Startup error: ${message}`);
-    console.error(message);
+    const safeMessage = redactForLog(message);
+    logger.error(`Startup error: ${safeMessage}`);
+    console.error(safeMessage);
     process.exit(1);
   }
 }
