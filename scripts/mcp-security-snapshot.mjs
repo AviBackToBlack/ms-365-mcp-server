@@ -266,6 +266,37 @@ function scanCode(files) {
 }
 
 
+
+function extractImplicitAuthScopes() {
+  const path = 'src/server.ts';
+  const source = readFileSync(path, 'utf8');
+  const sf = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const scopes = new Set();
+
+  function visit(node) {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'scopeSet' &&
+      node.initializer &&
+      ts.isNewExpression(node.initializer) &&
+      ts.isIdentifier(node.initializer.expression) &&
+      node.initializer.expression.text === 'Set'
+    ) {
+      const first = node.initializer.arguments?.[0];
+      if (first && ts.isArrayLiteralExpression(first)) {
+        for (const element of first.elements) {
+          if (ts.isStringLiteralLike(element)) scopes.add(element.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sf);
+  return [...scopes].sort();
+}
+
 function extractCloudNetworkHosts() {
   const path = 'src/cloud-config.ts';
   const source = readFileSync(path, 'utf8');
@@ -333,6 +364,7 @@ export function buildSnapshot() {
     endpointsSha256: sha256File('src/endpoints.json'),
     endpointCount: endpoints.length,
     graphScopes: [...scopes].sort(),
+    implicitAuthScopes: extractImplicitAuthScopes(),
     writeLikeScopes: [...scopes]
       .filter((scope) => /(Write|Send|Create|Delete|Manage)/.test(scope))
       .sort(),
@@ -374,6 +406,11 @@ export function validatePolicy(snapshot, policy) {
   const graphScopeDiff = diffSet(policy.approvedGraphScopes, snapshot.graphScopes);
   if (graphScopeDiff.added.length) {
     failures.push(`unapproved Graph scopes: ${graphScopeDiff.added.join(', ')}`);
+  }
+
+  const implicitScopeDiff = diffSet(policy.approvedImplicitAuthScopes, snapshot.implicitAuthScopes);
+  if (implicitScopeDiff.added.length) {
+    failures.push(`unapproved implicit auth scopes: ${implicitScopeDiff.added.join(', ')}`);
   }
 
   const hostDiff = diffSet(policy.approvedCloudNetworkHosts, snapshot.cloudNetworkHosts);
@@ -443,6 +480,7 @@ export function compareSnapshots(expected, actual) {
 
   for (const field of [
     'graphScopes',
+    'implicitAuthScopes',
     'writeLikeScopes',
     'writeCapableTools',
     'staticUrlHosts',
@@ -505,7 +543,8 @@ function main() {
 
   const summary = [
     `endpoint count: ${snapshot.endpointCount}`,
-    `Graph scopes: ${snapshot.graphScopes.length}`,
+    `Graph endpoint scopes: ${snapshot.graphScopes.length}`,
+    `implicit auth scopes: ${snapshot.implicitAuthScopes.join(', ') || 'none'}`,
     `write-capable tools: ${snapshot.writeCapableTools.length}`,
     `static URL hosts: ${snapshot.staticUrlHosts.length}`,
     `cloud network hosts: ${snapshot.cloudNetworkHosts.length}`,
