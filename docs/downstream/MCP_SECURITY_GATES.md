@@ -25,7 +25,7 @@ When an intentional source change modifies a security surface, regenerate the ba
 node scripts/mcp-security-snapshot.mjs --write
 ```
 
-and review the resulting JSON diff. A capability expansion may also require an explicit policy change; changing only the baseline is not enough for scopes, cloud network hosts, URL-bearing network environment variables, process execution, filesystem writes, or dynamic imports.
+and review the resulting JSON diff. A capability expansion may also require an explicit policy change; changing only the baseline is not enough for scopes, cloud network hosts, URL-bearing or dynamically-computed environment access, process execution, filesystem writes, dynamic code, or dynamic imports.
 
 ## Tool and instruction drift
 
@@ -41,7 +41,11 @@ A description, scope, path, method, request-body override, `llmTip`, preset, or 
 
 The source walker includes `.ts`, `.mts`, `.cts`, `.js`, `.mjs`, and `.cjs` files and skips test directories. This keeps CJS/CTS additions inside the same capability boundary instead of silently falling outside the analyzer.
 
+The MCP verifier itself is inside the capability scan as well as the critical-file hash surface. Its existing `writeFileSync` use for baseline/step-summary output is an explicit approved filesystem-write capability; adding execution, dynamic code, or network-style environment access to the verifier would therefore require policy review like any other source file.
+
 Complete generated parameter-schema fingerprinting is intentionally marked `deferred-to-SM-5`. Specifically, mutable `src/generated/client.ts` is untracked and currently produced from live Microsoft Graph OpenAPI input, so that file is excluded until SM-5 pins the generation inputs. Other tracked files under `src/generated/` are normal reviewed runtime source and remain inside the SM-4 hash/capability boundary.
+
+The single-file exclusion is deliberately explicit while that generated surface is exactly one known mutable file. SM-5 replaces this temporary name-keyed boundary with pinned generation inputs and deterministic generated-output evidence rather than teaching the SM-4 verifier to infer Git tracking state.
 
 ## Graph permission surface
 
@@ -76,14 +80,14 @@ The first-production profile is intentionally represented twice: declaratively i
 The gate distinguishes three concepts:
 
 - `cloudNetworkHosts`: the `authority` and `graphApi` destinations from cloud configuration; these are fail-closed policy.
-- `networkUrlEnvVars`: URL/URI/endpoint/host/origin environment inputs discovered across all scanned source files, including direct `process.env.X`, string element access, and aliases/default parameters rooted in `process.env`; new ones are fail-closed policy.
+- `networkUrlEnvVars`: a deliberately conservative name-pattern inventory of URL/URI/endpoint/host/origin-looking identifiers across all scanned source files. It intentionally over-includes matching property names even when the owner is not proven to be `process.env`, so helper-parameter reads cannot silently escape. Direct `process.env.X`, string element access, imported/destructured env objects, aliases/default parameters, and matching non-env owners are all visible. Computed or wholesale env access emits the explicit `<dynamic>` marker, which is unapproved by default and therefore fails closed.
 - `staticUrlHosts`: a conservative inventory of URL literals in network-critical files, including non-destination literals such as localhost callbacks or Azure portal references. Changes are review-visible baseline drift but are not mislabeled as confirmed outbound traffic.
 
 The current approved cloud network hosts are the Microsoft global and China login/Graph endpoints. The reviewed environment-controlled network surface currently includes `MS365_MCP_KEYVAULT_URL`, `MS365_MCP_PUBLIC_URL`, `MS365_MCP_BASE_URL`, `MS365_MCP_ALLOWED_REDIRECT_URIS`, `MS365_MCP_ATTACHMENT_URL_BASE`, `MS365_MCP_ATTACHMENT_HOST`, and `MS365_MCP_CORS_ORIGIN`. Their presence in source does not make them part of the first production profile.
 
 ## Process execution, dynamic code, and dynamic imports
 
-Any named, namespace, default, or TypeScript import-equals acquisition of `child_process` / `node:child_process` is treated as a process-execution capability. CommonJS-style `require()`, ESM `createRequire()` (named or module-namespace forms), `process.getBuiltinModule()`, re-exports, casted/parenthesized acquisitions, and require-alias chains are inventoried too.
+Any named, namespace, default, or TypeScript import-equals acquisition of `child_process` / `node:child_process` is treated as a process-execution capability. CommonJS-style `require()`, ESM `createRequire()` (named or module-namespace forms), `process.getBuiltinModule()` and aliases of it, re-exports, casted/parenthesized acquisitions, and require-alias chains are inventoried too. `worker_threads` / `node:worker_threads` is treated equally conservatively: acquiring the module is itself a new execution capability and fails closed unless explicitly approved.
 
 Current reviewed capabilities are:
 
@@ -92,7 +96,7 @@ Current reviewed capabilities are:
 
 Neither process-execution capability is part of the first production runtime profile.
 
-Literal dynamic imports are allowlisted by file + package specifier. Non-literal dynamic imports fail unconditionally. Direct `eval` / `Function` calls and constructors, `globalThis.eval` / `globalThis.Function`, string element access on `globalThis`, comma-indirect calls, simple aliases/assignments, `.call` / `.apply` / `.bind`, and `Reflect.apply` are classified as forbidden dynamic code. Generic static analysis remains a backstop for more exotic indirection.
+Literal dynamic imports are allowlisted by file + package specifier. Non-literal dynamic imports fail unconditionally. Direct `eval` / `Function` calls and constructors, `globalThis.eval` / `globalThis.Function`, string element access on `globalThis`, comma-indirect calls, simple aliases/assignments, `.call` / `.apply` / `.bind`, `Reflect.apply` / `Reflect.construct`, and `Function.prototype.constructor` are classified as forbidden dynamic code. Any acquisition of `vm` / `node:vm` is also classified as forbidden dynamic code rather than trying to enumerate every string-evaluating VM entry point. Generic static analysis remains a backstop for more exotic indirection.
 
 ## Filesystem write surface
 
