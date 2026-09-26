@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -75,12 +75,26 @@ describe('supply-chain verifier fail-closed behavior', () => {
     expect(result.stderr).toContain('unapproved vulnerable package: unexpected-package');
   });
 
-  it('accepts the repository baseline on the pinned Node version', () => {
-    const output = execFileSync(process.execPath, [verifySupplyChain], {
-      cwd: repoRoot,
+  it('rejects a Node version that does not match policy', () => {
+    const dir = makeTempRepo();
+    const policy = JSON.parse(
+      readFileSync(join(repoRoot, 'downstream', 'supply-chain-policy.json'), 'utf8')
+    );
+    const lock = readFileSync(join(repoRoot, 'package-lock.json'), 'utf8');
+
+    policy.verificationToolchain.nodeVersion = '0.0.0';
+    writeFileSync(
+      join(dir, 'downstream', 'supply-chain-policy.json'),
+      JSON.stringify(policy)
+    );
+    writeFileSync(join(dir, 'package-lock.json'), lock);
+
+    const result = spawnSync(process.execPath, [verifySupplyChain], {
+      cwd: dir,
       encoding: 'utf8',
     });
 
-    expect(output).toContain('Supply-chain baseline verification PASS');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Node version');
   });
 });
