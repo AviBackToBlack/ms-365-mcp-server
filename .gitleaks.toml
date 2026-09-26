@@ -1,0 +1,37 @@
+title = "ms-365-mcp-server downstream secret scanning"
+minVersion = "8.30.1"
+
+[extend]
+useDefault = true
+
+# These are exact historical false-positive exceptions from the imported upstream
+# history. Each exception requires the detector rule, commit, and path to match.
+# Future occurrences in the same files remain findings.
+
+[[allowlists]]
+description = "Synthetic JWT fixture used to test log redaction"
+condition = "AND"
+targetRules = ["jwt"]
+commits = ["9f573b49d85fe79cd12921f39497685ff21d1818"]
+paths = ['''^test/log-redactor\.test\.ts$''']
+
+[[allowlists]]
+description = "Azure built-in role definition GUIDs are identifiers, not secrets"
+condition = "AND"
+targetRules = ["generic-api-key"]
+commits = ["489333dda5af58a9ad756a044e84c9b34e104820"]
+paths = ['''^examples/azure-container-apps/main\.bicep$''']
+
+[[allowlists]]
+description = "Microsoft public client application ID is an identifier, not a client secret"
+condition = "AND"
+targetRules = ["generic-api-key"]
+commits = ["dfc49d2c1b3f3a5f4b6c992574bd37327a7c8a2d"]
+paths = ['''^src/auth\.ts$''']
+
+[[allowlists]]
+description = "README contains a synthetic bearer token for curl documentation"
+condition = "AND"
+targetRules = ["curl-auth-header"]
+commits = ["fd5e0e29a7e2a10a2d9f83a07ded0bf26d3fc718"]
+paths = ['''^README\.md$''']
