@@ -140,6 +140,7 @@ function scanCode(files) {
       if (CHILD_PROCESS_MODULES.has(mod)) {
         if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
+            if (el.isTypeOnly) continue;
             const imported = el.propertyName?.text ?? el.name.text;
             childImports.set(el.name.text, imported);
             processExecution.push({ file: rel, module: mod, callee: imported });
@@ -264,6 +265,33 @@ function scanCode(files) {
   };
 }
 
+
+function extractCloudNetworkHosts() {
+  const path = 'src/cloud-config.ts';
+  const source = readFileSync(path, 'utf8');
+  const sf = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const hosts = new Set();
+
+  function visit(node) {
+    if (
+      ts.isPropertyAssignment(node) &&
+      ((ts.isIdentifier(node.name) && ['authority', 'graphApi'].includes(node.name.text)) ||
+        (ts.isStringLiteral(node.name) && ['authority', 'graphApi'].includes(node.name.text))) &&
+      ts.isStringLiteralLike(node.initializer)
+    ) {
+      try {
+        hosts.add(new URL(node.initializer.text).hostname.toLowerCase());
+      } catch {
+        // Invalid endpoint literals are caught by runtime/config tests; this is inventory only.
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sf);
+  return [...hosts].sort();
+}
+
 export function buildSnapshot() {
   const endpoints = JSON.parse(readFileSync('src/endpoints.json', 'utf8'));
   const scopes = new Set();
@@ -311,6 +339,7 @@ export function buildSnapshot() {
     writeCapableTools: [...new Set(writeCapableTools)].sort(),
     toolFingerprints,
     staticUrlHosts: scan.staticUrlHosts,
+    cloudNetworkHosts: extractCloudNetworkHosts(),
     networkUrlEnvVars: scan.networkUrlEnvVars,
     processExecution: scan.processExecution,
     dynamicImports: scan.dynamicImports,
@@ -347,9 +376,14 @@ export function validatePolicy(snapshot, policy) {
     failures.push(`unapproved Graph scopes: ${graphScopeDiff.added.join(', ')}`);
   }
 
-  const hostDiff = diffSet(policy.approvedStaticUrlHosts, snapshot.staticUrlHosts);
+  const hostDiff = diffSet(policy.approvedCloudNetworkHosts, snapshot.cloudNetworkHosts);
   if (hostDiff.added.length) {
-    failures.push(`unapproved static URL hosts: ${hostDiff.added.join(', ')}`);
+    failures.push(`unapproved cloud network hosts: ${hostDiff.added.join(', ')}`);
+  }
+
+  const envDiff = diffSet(policy.approvedNetworkUrlEnvVars, snapshot.networkUrlEnvVars);
+  if (envDiff.added.length) {
+    failures.push(`unapproved URL-bearing network env vars: ${envDiff.added.join(', ')}`);
   }
 
   const approvedProcess = keys(policy.approvedProcessExecution, ['file', 'module', 'callee']);
@@ -412,6 +446,7 @@ export function compareSnapshots(expected, actual) {
     'writeLikeScopes',
     'writeCapableTools',
     'staticUrlHosts',
+    'cloudNetworkHosts',
     'networkUrlEnvVars',
     'processExecution',
     'dynamicImports',
@@ -473,6 +508,7 @@ function main() {
     `Graph scopes: ${snapshot.graphScopes.length}`,
     `write-capable tools: ${snapshot.writeCapableTools.length}`,
     `static URL hosts: ${snapshot.staticUrlHosts.length}`,
+    `cloud network hosts: ${snapshot.cloudNetworkHosts.length}`,
     `URL-bearing network env vars: ${snapshot.networkUrlEnvVars.length}`,
     `process execution capabilities: ${snapshot.processExecution.length}`,
     `filesystem write sites: ${snapshot.filesystemWrites.length}`,
