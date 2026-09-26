@@ -434,7 +434,7 @@ async function readCacheKeys(): Promise<CacheKeyState> {
         keys.push(parseCacheKey(stored));
       } catch (error) {
         logger.warn(
-          `Ignoring unusable auth cache key in the keychain: ${(error as Error).message}`
+          'Ignoring unusable auth cache key in the keychain'
         );
       }
     }
@@ -544,7 +544,7 @@ async function persistCacheKey(key: Buffer, canUseKeychain: boolean): Promise<Bu
         logger.info('Stored a new auth cache key in the system keychain');
         return key;
       } catch (error) {
-        logger.warn(`Keychain save failed for the auth cache key: ${(error as Error).message}`);
+        logger.warn('Keychain save failed for the auth cache key');
       }
     }
   }
