@@ -180,12 +180,19 @@ export function scanCode(files) {
     function isProcessEnvObject(node) {
       const expr = unwrapExpression(node);
       if (!expr) return false;
+
+      function processOwner(owner) {
+        if (isProcessObject(owner)) return true;
+        const mod = requireModule(owner);
+        return PROCESS_MODULES.has(mod);
+      }
+
       return (
         (ts.isPropertyAccessExpression(expr) &&
-          isProcessObject(expr.expression) &&
+          processOwner(expr.expression) &&
           expr.name.text === 'env') ||
         (ts.isElementAccessExpression(expr) &&
-          isProcessObject(expr.expression) &&
+          processOwner(expr.expression) &&
           expr.argumentExpression &&
           ts.isStringLiteralLike(expr.argumentExpression) &&
           expr.argumentExpression.text === 'env')
@@ -340,8 +347,7 @@ export function scanCode(files) {
 
       if (
         ts.isPropertyAccessExpression(expr) &&
-        ts.isIdentifier(expr.expression) &&
-        expr.expression.text === 'globalThis' &&
+        isGlobalThisObject(expr.expression) &&
         (expr.name.text === 'eval' || expr.name.text === 'Function')
       ) {
         return 'globalThis.' + expr.name.text;
@@ -349,8 +355,7 @@ export function scanCode(files) {
 
       if (
         ts.isElementAccessExpression(expr) &&
-        ts.isIdentifier(expr.expression) &&
-        expr.expression.text === 'globalThis' &&
+        isGlobalThisObject(expr.expression) &&
         expr.argumentExpression &&
         ts.isStringLiteralLike(expr.argumentExpression) &&
         (expr.argumentExpression.text === 'eval' || expr.argumentExpression.text === 'Function')
@@ -471,7 +476,7 @@ export function scanCode(files) {
         }
 
         if (CHILD_PROCESS_MODULES.has(mod) || WORKER_THREAD_MODULES.has(mod)) {
-          if (!stmt.exportClause) {
+          if (!stmt.exportClause || ts.isNamespaceExport(stmt.exportClause)) {
             processExecution.push({ file: rel, module: mod, callee: '*' });
           } else if (ts.isNamedExports(stmt.exportClause)) {
             for (const el of stmt.exportClause.elements) {
@@ -483,7 +488,7 @@ export function scanCode(files) {
         }
 
         if (FS_MODULES.has(mod)) {
-          if (!stmt.exportClause) {
+          if (!stmt.exportClause || ts.isNamespaceExport(stmt.exportClause)) {
             filesystemWrites.push({ file: rel, callee: '*' });
           } else if (ts.isNamedExports(stmt.exportClause)) {
             for (const el of stmt.exportClause.elements) {
@@ -515,8 +520,12 @@ export function scanCode(files) {
         ts.isObjectBindingPattern(node.name)
       ) {
         for (const element of node.name.elements) {
+          if (element.dotDotDotToken && node.initializer && isEnvShapedObject(node.initializer)) {
+            networkUrlEnvVars.add('<dynamic>');
+            continue;
+          }
           if (element.propertyName && ts.isComputedPropertyName(element.propertyName)) {
-            if (!node.initializer || isEnvShapedObject(node.initializer)) {
+            if (node.initializer && isEnvShapedObject(node.initializer)) {
               networkUrlEnvVars.add('<dynamic>');
             }
             continue;
@@ -535,12 +544,28 @@ export function scanCode(files) {
           ts.isVariableDeclaration(node) &&
           ts.isObjectBindingPattern(node.name) &&
           initializer &&
-          ts.isIdentifier(initializer) &&
-          initializer.text === 'process'
+          isProcessObject(initializer)
         ) {
           for (const element of node.name.elements) {
             const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
             if (key === 'env' && ts.isIdentifier(element.name)) envAliases.add(element.name.text);
+            if (key === 'getBuiltinModule' && ts.isIdentifier(element.name)) {
+              getBuiltinModuleAliases.add(element.name.text);
+            }
+          }
+        }
+
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isObjectBindingPattern(node.name) &&
+          initializer &&
+          isGlobalThisObject(initializer)
+        ) {
+          for (const element of node.name.elements) {
+            const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
+            if (key === 'process' && ts.isIdentifier(element.name)) {
+              processAliases.add(element.name.text);
+            }
           }
         }
 
@@ -560,6 +585,16 @@ export function scanCode(files) {
           ts.isPropertyAccessExpression(initializer) &&
           isProcessObject(initializer.expression) &&
           initializer.name.text === 'getBuiltinModule'
+        ) {
+          getBuiltinModuleAliases.add(node.name.text);
+        }
+
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          initializer &&
+          ts.isIdentifier(initializer) &&
+          getBuiltinModuleAliases.has(initializer.text)
         ) {
           getBuiltinModuleAliases.add(node.name.text);
         }
@@ -703,6 +738,8 @@ export function scanCode(files) {
                 'values',
                 'getOwnPropertyNames',
                 'getOwnPropertySymbols',
+                'getOwnPropertyDescriptor',
+                'getOwnPropertyDescriptors',
                 'assign',
               ].includes(callMethod)) ||
             (ts.isIdentifier(callOwner) &&
@@ -710,10 +747,25 @@ export function scanCode(files) {
               callMethod === 'stringify') ||
             (ts.isIdentifier(callOwner) &&
               callOwner.text === 'Reflect' &&
-              callMethod === 'ownKeys');
+              ['ownKeys', 'getOwnPropertyDescriptor'].includes(callMethod));
 
           if (wholesaleEnvCall && node.arguments.some((arg) => isEnvShapedObject(arg))) {
             networkUrlEnvVars.add('<dynamic>');
+          }
+
+          if (
+            ts.isIdentifier(callOwner) &&
+            callOwner.text === 'Reflect' &&
+            callMethod === 'get' &&
+            node.arguments[0] &&
+            isEnvShapedObject(node.arguments[0])
+          ) {
+            const key = node.arguments[1];
+            if (key && ts.isStringLiteralLike(key) && NETWORK_ENV_NAME_RE.test(key.text)) {
+              networkUrlEnvVars.add(key.text);
+            } else {
+              networkUrlEnvVars.add('<dynamic>');
+            }
           }
         }
 

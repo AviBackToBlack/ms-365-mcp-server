@@ -284,6 +284,12 @@ describe('MCP security baseline', () => {
       file: fsReexport.filesystemWrites[0].file,
       callee: 'writeFileSync',
     });
+
+    const namespaceProcess = scanFixture("export * as cp from 'child_process';");
+    expect(namespaceProcess.processExecution.some((site) => site.callee === '*')).toBe(true);
+
+    const namespaceFs = scanFixture("export * as files from 'node:fs';");
+    expect(namespaceFs.filesystemWrites.some((site) => site.callee === '*')).toBe(true);
   });
 
   it('ignores type-only builtin imports', () => {
@@ -382,11 +388,19 @@ describe('MCP security baseline', () => {
         'const b = { ...process.env };',
         'const c = Object.entries(env);',
         'const d = JSON.stringify(process.env);',
+        'const e = Object.getOwnPropertyDescriptors(process.env);',
+        "const f = Reflect.get(process.env, 'MS365_MCP_KEYVAULT_URL');",
+        'const g = Reflect.get(env, key);',
+        "const h = Object.getOwnPropertyDescriptor(env, 'MS365_MCP_PUBLIC_URL');",
+        'const i = Reflect.getOwnPropertyDescriptor(env, key);',
         'for (const k in env) { void k; }',
         'const { [key]: value } = env;',
+        'const { ...rest } = process.env;',
       ].join('\n')
     );
+
     expect(scan.networkUrlEnvVars).toContain('<dynamic>');
+    expect(scan.networkUrlEnvVars).toContain('MS365_MCP_KEYVAULT_URL');
 
     const snapshot = clone(baseline);
     snapshot.networkUrlEnvVars = [...new Set([...baseline.networkUrlEnvVars, '<dynamic>'])].sort();
@@ -400,13 +414,23 @@ describe('MCP security baseline', () => {
       [
         "import proc from 'node:process';",
         'const p = proc;',
+        'const { getBuiltinModule: destructuredGetBuiltin } = p;',
         'const getBuiltin = p.getBuiltinModule;',
-        "const { execSync } = getBuiltin('child_process');",
+        'const getBuiltin2 = getBuiltin;',
+        "const { execSync } = getBuiltin2('child_process');",
+        "destructuredGetBuiltin('node:worker_threads');",
         "execSync('echo safe-fixture');",
+        'const { process: globalProcess } = globalThis;',
+        "globalProcess.getBuiltinModule('node:worker_threads');",
         "globalThis.process.getBuiltinModule('node:worker_threads');",
+        "global.eval('1');",
+        "global['Function']('return 1');",
         "Reflect['apply'](eval, null, ['1']);",
         "Reflect.construct(Function, ['return 1']);",
         'const F = Function.prototype.constructor;',
+        "const requiredEnv = require('node:process').env;",
+        'const dynamicKey = getName();',
+        'void requiredEnv[dynamicKey];',
       ].join('\n')
     );
 
@@ -414,10 +438,18 @@ describe('MCP security baseline', () => {
     expect(scan.processExecution.some((entry) => entry.module === 'node:worker_threads')).toBe(
       true
     );
+    expect(scan.networkUrlEnvVars).toContain('<dynamic>');
     const kinds = scan.dynamicCode.map((entry) => entry.kind);
+    expect(kinds).toContain('call globalThis.eval');
+    expect(kinds).toContain("call globalThis['Function']");
     expect(kinds).toContain('Reflect.apply eval');
     expect(kinds).toContain('Reflect.construct Function');
     expect(kinds).toContain('alias Function.prototype.constructor');
+  });
+
+  it('does not classify unrelated computed parameter destructuring as dynamic env access', () => {
+    const scan = scanFixture('function pick({ [key]: value }) { return value; }');
+    expect(scan.networkUrlEnvVars).not.toContain('<dynamic>');
   });
 
   it('intentionally inventories env-style names even on non-env owners', () => {

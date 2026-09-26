@@ -29,34 +29,37 @@ export const ENV_FILE_ALLOWLIST = [
 
 type EnvFileKey = (typeof ENV_FILE_ALLOWLIST)[number];
 
-function getAllowedEnv(key: EnvFileKey): string | undefined {
-  switch (key) {
-    case 'MS365_MCP_CLIENT_ID':
-      return process.env.MS365_MCP_CLIENT_ID;
-    case 'MS365_MCP_CLIENT_SECRET':
-      return process.env.MS365_MCP_CLIENT_SECRET;
-    case 'MS365_MCP_TENANT_ID':
-      return process.env.MS365_MCP_TENANT_ID;
-    case 'MS365_MCP_CLOUD_TYPE':
-      return process.env.MS365_MCP_CLOUD_TYPE;
-  }
+interface EnvFileBinding {
+  get(): string | undefined;
+  set(value: string): void;
 }
 
-function setAllowedEnv(key: EnvFileKey, value: string): void {
-  switch (key) {
-    case 'MS365_MCP_CLIENT_ID':
+const ENV_FILE_BINDINGS = {
+  MS365_MCP_CLIENT_ID: {
+    get: () => process.env.MS365_MCP_CLIENT_ID,
+    set: (value: string) => {
       process.env.MS365_MCP_CLIENT_ID = value;
-      return;
-    case 'MS365_MCP_CLIENT_SECRET':
+    },
+  },
+  MS365_MCP_CLIENT_SECRET: {
+    get: () => process.env.MS365_MCP_CLIENT_SECRET,
+    set: (value: string) => {
       process.env.MS365_MCP_CLIENT_SECRET = value;
-      return;
-    case 'MS365_MCP_TENANT_ID':
+    },
+  },
+  MS365_MCP_TENANT_ID: {
+    get: () => process.env.MS365_MCP_TENANT_ID,
+    set: (value: string) => {
       process.env.MS365_MCP_TENANT_ID = value;
-      return;
-    case 'MS365_MCP_CLOUD_TYPE':
+    },
+  },
+  MS365_MCP_CLOUD_TYPE: {
+    get: () => process.env.MS365_MCP_CLOUD_TYPE,
+    set: (value: string) => {
       process.env.MS365_MCP_CLOUD_TYPE = value;
-  }
-}
+    },
+  },
+} satisfies Record<EnvFileKey, EnvFileBinding>;
 
 export interface LoadEnvFileResult {
   /** Allowlisted keys taken from the file. */
@@ -90,10 +93,10 @@ export function loadEnvFile(options: { path?: string } = {}): LoadEnvFileResult 
     const allowedKey = key as EnvFileKey;
     // Anything already set came from the operator, so it wins - same precedence
     // dotenv itself uses.
-    if (getAllowedEnv(allowedKey) !== undefined) {
+    if (ENV_FILE_BINDINGS[allowedKey].get() !== undefined) {
       continue;
     }
-    setAllowedEnv(allowedKey, value);
+    ENV_FILE_BINDINGS[allowedKey].set(value);
     applied.push(key);
   }
 

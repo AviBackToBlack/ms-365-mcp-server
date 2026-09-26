@@ -44,15 +44,16 @@ export function paginationAllowed(): boolean {
 
 export const DEFAULT_MAX_PAGES = 100;
 
+type PositiveIntEnvName = 'MS365_MCP_MAX_PAGES' | 'MS365_MCP_MAX_ITEMS';
+
+const POSITIVE_INT_ENV_READERS = {
+  MS365_MCP_MAX_PAGES: () => process.env.MS365_MCP_MAX_PAGES,
+  MS365_MCP_MAX_ITEMS: () => process.env.MS365_MCP_MAX_ITEMS,
+} satisfies Record<PositiveIntEnvName, () => string | undefined>;
+
 /** Reads a positive-integer env var, falling back to `defaultValue` when unset or invalid. */
-export function positiveIntFromEnv(
-  name: 'MS365_MCP_MAX_PAGES' | 'MS365_MCP_MAX_ITEMS',
-  defaultValue: number
-): number {
-  const raw =
-    name === 'MS365_MCP_MAX_PAGES'
-      ? process.env.MS365_MCP_MAX_PAGES
-      : process.env.MS365_MCP_MAX_ITEMS;
+export function positiveIntFromEnv(name: PositiveIntEnvName, defaultValue: number): number {
+  const raw = POSITIVE_INT_ENV_READERS[name]();
   if (raw === undefined || raw === '') return defaultValue;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 1) {
