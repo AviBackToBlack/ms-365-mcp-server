@@ -1,0 +1,51 @@
+name: MCP Security Baseline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Use pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.22.1'
+          cache: npm
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Verify current MCP security surface
+        run: node scripts/mcp-security-snapshot.mjs --check
+
+      - name: Run MCP security verifier self-tests
+        run: npx --no-install vitest run test/mcp-security-baseline.test.mjs --reporter=default
+
+      - name: Report MCP security delta against PR base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          before="$RUNNER_TEMP/mcp-security-baseline-before.json"
+          if git cat-file -e "$BASE_SHA:downstream/mcp-security-baseline.json" 2>/dev/null; then
+            git show "$BASE_SHA:downstream/mcp-security-baseline.json" > "$before"
+            node scripts/mcp-security-snapshot.mjs --report-diff "$before"
+          else
+            echo "MCP security baseline introduced by this PR." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
