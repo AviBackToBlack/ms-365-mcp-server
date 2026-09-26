@@ -86,7 +86,15 @@
     "login.microsoftonline.com",
     "microsoftgraph.chinacloudapi.cn"
   ],
-  "approvedNetworkUrlEnvVars": ["MS365_MCP_KEYVAULT_URL"],
+  "approvedNetworkUrlEnvVars": [
+    "MS365_MCP_ALLOWED_REDIRECT_URIS",
+    "MS365_MCP_ATTACHMENT_HOST",
+    "MS365_MCP_ATTACHMENT_URL_BASE",
+    "MS365_MCP_BASE_URL",
+    "MS365_MCP_CORS_ORIGIN",
+    "MS365_MCP_KEYVAULT_URL",
+    "MS365_MCP_PUBLIC_URL"
+  ],
   "approvedProcessExecution": [
     {
       "callee": "execSync",

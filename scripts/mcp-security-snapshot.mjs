@@ -10,23 +10,14 @@ const ROOT = process.cwd();
 const BASELINE_PATH = 'downstream/mcp-security-baseline.json';
 const POLICY_PATH = 'downstream/mcp-security-policy.json';
 
-const CRITICAL_FILES = [
-  'src/mcp-instructions.ts',
-  'src/endpoints.json',
-  'src/auth.ts',
-  'src/cloud-config.ts',
-  'src/graph-client.ts',
-  'src/graph-tools.ts',
-  'src/oauth-provider.ts',
-  'src/lib/microsoft-auth.ts',
-  'src/token-cache-storage.ts',
-  'src/secrets.ts',
-  'src/logger.ts',
-  'src/lib/log-redactor.ts',
-  'src/request-context.ts',
-  'src/server.ts',
-  'src/cli.ts',
-];
+function listCriticalFiles() {
+  const sourceFiles = walkFiles(join(ROOT, 'src')).map((path) =>
+    relative(ROOT, path).replaceAll('\\', '/')
+  );
+  return [
+    ...new Set([...sourceFiles, 'src/endpoints.json', 'scripts/mcp-security-snapshot.mjs']),
+  ].sort();
+}
 
 const NETWORK_FILES = [
   'src/auth.ts',
@@ -61,6 +52,9 @@ const FS_WRITE_CALLEES = new Set([
 ]);
 
 const CHILD_PROCESS_MODULES = new Set(['child_process', 'node:child_process']);
+const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
+const CREATE_REQUIRE_MODULES = new Set(['module', 'node:module']);
+const NETWORK_ENV_NAME_RE = /(?:_URL|_URI|_URIS|_ENDPOINT|_HOST|_ORIGIN|_URL_BASE)$/i;
 
 function sha256Bytes(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
@@ -113,7 +107,7 @@ function scriptKind(path) {
   return ts.ScriptKind.JS;
 }
 
-function scanCode(files) {
+export function scanCode(files) {
   const processExecution = [];
   const dynamicImports = [];
   const nonLiteralDynamicImports = [];
@@ -127,9 +121,157 @@ function scanCode(files) {
     const rel = relative(ROOT, path).replaceAll('\\', '/');
     const sf = ts.createSourceFile(rel, source, ts.ScriptTarget.Latest, true, scriptKind(path));
     const childImports = new Map();
-    const childNamespaces = new Set();
+    const childNamespaces = new Map();
     const fsImports = new Map();
     const fsNamespaces = new Set();
+    const createRequireImports = new Set();
+    const requireAliases = new Set(['require']);
+    const envAliases = new Set();
+
+    function addEnvBinding(name) {
+      if (ts.isIdentifier(name)) {
+        envAliases.add(name.text);
+        return;
+      }
+      if (ts.isObjectBindingPattern(name)) {
+        for (const element of name.elements) {
+          const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
+          const normalized = key.replace(/^['"]|['"]$/g, '');
+          if (NETWORK_ENV_NAME_RE.test(normalized)) networkUrlEnvVars.add(normalized);
+        }
+      }
+    }
+
+    function isProcessEnvObject(node) {
+      return (
+        (ts.isPropertyAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === 'process' &&
+          node.name.text === 'env') ||
+        (ts.isElementAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === 'process' &&
+          node.argumentExpression &&
+          ts.isStringLiteralLike(node.argumentExpression) &&
+          node.argumentExpression.text === 'env')
+      );
+    }
+
+    function isEnvObject(node) {
+      return isProcessEnvObject(node) || (ts.isIdentifier(node) && envAliases.has(node.text));
+    }
+
+    function envAccessName(node) {
+      if (ts.isPropertyAccessExpression(node) && isEnvObject(node.expression)) {
+        return node.name.text;
+      }
+      if (
+        ts.isElementAccessExpression(node) &&
+        isEnvObject(node.expression) &&
+        node.argumentExpression &&
+        ts.isStringLiteralLike(node.argumentExpression)
+      ) {
+        return node.argumentExpression.text;
+      }
+      return undefined;
+    }
+
+    function requireModule(call) {
+      if (!ts.isCallExpression(call) || call.arguments.length === 0) return undefined;
+      const arg = call.arguments[0];
+      if (!ts.isStringLiteralLike(arg)) return undefined;
+
+      if (ts.isIdentifier(call.expression) && requireAliases.has(call.expression.text)) {
+        return arg.text;
+      }
+
+      if (
+        ts.isCallExpression(call.expression) &&
+        ts.isIdentifier(call.expression.expression) &&
+        createRequireImports.has(call.expression.expression.text)
+      ) {
+        return arg.text;
+      }
+
+      return undefined;
+    }
+
+    function bindRequiredModule(name, mod) {
+      if (CHILD_PROCESS_MODULES.has(mod)) {
+        if (ts.isIdentifier(name)) {
+          childNamespaces.set(name.text, mod);
+          processExecution.push({ file: rel, module: mod, callee: '*' });
+        } else if (ts.isObjectBindingPattern(name)) {
+          for (const element of name.elements) {
+            const imported = element.propertyName?.getText(sf) ?? element.name.getText(sf);
+            const local = element.name.getText(sf);
+            childImports.set(local, { module: mod, callee: imported });
+            processExecution.push({ file: rel, module: mod, callee: imported });
+          }
+        }
+      }
+
+      if (FS_MODULES.has(mod)) {
+        if (ts.isIdentifier(name)) {
+          fsNamespaces.add(name.text);
+        } else if (ts.isObjectBindingPattern(name)) {
+          for (const element of name.elements) {
+            const imported = element.propertyName?.getText(sf) ?? element.name.getText(sf);
+            const local = element.name.getText(sf);
+            fsImports.set(local, imported);
+          }
+        }
+      }
+    }
+
+    function unwrapExpression(node) {
+      let current = node;
+      while (
+        current &&
+        (ts.isParenthesizedExpression(current) ||
+          ts.isAsExpression(current) ||
+          ts.isTypeAssertionExpression(current) ||
+          ts.isNonNullExpression(current))
+      ) {
+        current = current.expression;
+      }
+      return current;
+    }
+
+    function dynamicCodeTarget(node) {
+      const expr = unwrapExpression(node);
+      if (!expr) return undefined;
+
+      if (ts.isIdentifier(expr) && (expr.text === 'eval' || expr.text === 'Function')) {
+        return expr.text;
+      }
+
+      if (
+        ts.isPropertyAccessExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        expr.expression.text === 'globalThis' &&
+        (expr.name.text === 'eval' || expr.name.text === 'Function')
+      ) {
+        return 'globalThis.' + expr.name.text;
+      }
+
+      if (
+        ts.isElementAccessExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        expr.expression.text === 'globalThis' &&
+        expr.argumentExpression &&
+        ts.isStringLiteralLike(expr.argumentExpression) &&
+        (expr.argumentExpression.text === 'eval' || expr.argumentExpression.text === 'Function')
+      ) {
+        return "globalThis['" + expr.argumentExpression.text + "']";
+      }
+
+      if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+        return dynamicCodeTarget(expr.right);
+      }
+
+      return undefined;
+    }
 
     for (const stmt of sf.statements) {
       if (!ts.isImportDeclaration(stmt) || !ts.isStringLiteral(stmt.moduleSpecifier)) continue;
@@ -137,21 +279,37 @@ function scanCode(files) {
       const clause = stmt.importClause;
       if (!clause) continue;
 
+      if (
+        CREATE_REQUIRE_MODULES.has(mod) &&
+        clause.namedBindings &&
+        ts.isNamedImports(clause.namedBindings)
+      ) {
+        for (const el of clause.namedBindings.elements) {
+          const imported = el.propertyName?.text ?? el.name.text;
+          if (imported === 'createRequire') createRequireImports.add(el.name.text);
+        }
+      }
+
       if (CHILD_PROCESS_MODULES.has(mod)) {
+        if (clause.name) {
+          childNamespaces.set(clause.name.text, mod);
+          processExecution.push({ file: rel, module: mod, callee: '*' });
+        }
         if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
             if (el.isTypeOnly) continue;
             const imported = el.propertyName?.text ?? el.name.text;
-            childImports.set(el.name.text, imported);
+            childImports.set(el.name.text, { module: mod, callee: imported });
             processExecution.push({ file: rel, module: mod, callee: imported });
           }
         } else if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
-          childNamespaces.add(clause.namedBindings.name.text);
+          childNamespaces.set(clause.namedBindings.name.text, mod);
           processExecution.push({ file: rel, module: mod, callee: '*' });
         }
       }
 
-      if (['fs', 'node:fs', 'fs/promises', 'node:fs/promises'].includes(mod)) {
+      if (FS_MODULES.has(mod)) {
+        if (clause.name) fsNamespaces.add(clause.name.text);
         if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
             fsImports.set(el.name.text, el.propertyName?.text ?? el.name.text);
@@ -174,21 +332,48 @@ function scanCode(files) {
     }
 
     function visit(node) {
+      if ((ts.isVariableDeclaration(node) || ts.isParameter(node)) && node.initializer) {
+        if (isEnvObject(node.initializer)) addEnvBinding(node.name);
+
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isCallExpression(node.initializer) &&
+          ts.isIdentifier(node.initializer.expression) &&
+          createRequireImports.has(node.initializer.expression.text) &&
+          ts.isIdentifier(node.name)
+        ) {
+          requireAliases.add(node.name.text);
+        }
+
+        if (ts.isVariableDeclaration(node) && ts.isCallExpression(node.initializer)) {
+          const mod = requireModule(node.initializer);
+          if (mod) bindRequiredModule(node.name, mod);
+        }
+
+        const aliasTarget = dynamicCodeTarget(node.initializer);
+        if (aliasTarget) dynamicCode.push({ file: rel, kind: 'alias ' + aliasTarget });
+
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isObjectBindingPattern(node.name) &&
+          ts.isIdentifier(node.initializer) &&
+          node.initializer.text === 'globalThis'
+        ) {
+          for (const element of node.name.elements) {
+            const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
+            if (key === 'eval' || key === 'Function') {
+              dynamicCode.push({ file: rel, kind: 'alias globalThis.' + key });
+            }
+          }
+        }
+      }
+
       if (ts.isStringLiteralLike(node) && NETWORK_FILES.includes(rel)) {
         recordHost(node.text);
       }
 
-      if (
-        NETWORK_FILES.includes(rel) &&
-        ts.isPropertyAccessExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === 'process' &&
-        node.expression.name.text === 'env' &&
-        /URL/.test(node.name.text)
-      ) {
-        networkUrlEnvVars.add(node.name.text);
-      }
+      const envName = envAccessName(node);
+      if (envName && NETWORK_ENV_NAME_RE.test(envName)) networkUrlEnvVars.add(envName);
 
       if (ts.isCallExpression(node)) {
         if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
@@ -203,21 +388,35 @@ function scanCode(files) {
           }
         }
 
-        if (ts.isIdentifier(node.expression) && node.expression.text === 'eval') {
-          dynamicCode.push({ file: rel, kind: 'eval' });
+        const dynamicTarget = dynamicCodeTarget(node.expression);
+        if (dynamicTarget) dynamicCode.push({ file: rel, kind: 'call ' + dynamicTarget });
+
+        const required = requireModule(node);
+        if (required && CHILD_PROCESS_MODULES.has(required)) {
+          processExecution.push({ file: rel, module: required, callee: '*' });
         }
 
         if (ts.isIdentifier(node.expression) && childImports.has(node.expression.text)) {
+          const capability = childImports.get(node.expression.text);
           processExecution.push({
             file: rel,
-            module: 'child_process',
-            callee: childImports.get(node.expression.text),
+            module: capability.module,
+            callee: capability.callee,
           });
         } else if (ts.isPropertyAccessExpression(node.expression)) {
           const owner = node.expression.expression;
           const name = node.expression.name.text;
           if (ts.isIdentifier(owner) && childNamespaces.has(owner.text)) {
-            processExecution.push({ file: rel, module: 'child_process', callee: name });
+            processExecution.push({
+              file: rel,
+              module: childNamespaces.get(owner.text),
+              callee: name,
+            });
+          } else if (ts.isCallExpression(owner)) {
+            const mod = requireModule(owner);
+            if (mod && CHILD_PROCESS_MODULES.has(mod)) {
+              processExecution.push({ file: rel, module: mod, callee: name });
+            }
           }
         }
 
@@ -233,18 +432,25 @@ function scanCode(files) {
             FS_WRITE_CALLEES.has(callee)
           ) {
             filesystemWrites.push({ file: rel, callee });
+          } else if (ts.isCallExpression(owner)) {
+            const mod = requireModule(owner);
+            if (mod && FS_MODULES.has(mod) && FS_WRITE_CALLEES.has(callee)) {
+              filesystemWrites.push({ file: rel, callee });
+            }
           } else if (FS_WRITE_CALLEES.has(callee)) {
             filesystemWrites.push({ file: rel, callee });
           }
         }
       }
 
-      if (
-        ts.isNewExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        node.expression.text === 'Function'
-      ) {
-        dynamicCode.push({ file: rel, kind: 'new Function' });
+      if (ts.isNewExpression(node)) {
+        const dynamicTarget = dynamicCodeTarget(node.expression);
+        if (dynamicTarget) dynamicCode.push({ file: rel, kind: 'new ' + dynamicTarget });
+      }
+
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        const aliasTarget = dynamicCodeTarget(node.right);
+        if (aliasTarget) dynamicCode.push({ file: rel, kind: 'alias ' + aliasTarget });
       }
 
       ts.forEachChild(node, visit);
@@ -259,44 +465,88 @@ function scanCode(files) {
     );
 
   return {
-    processExecution: uniq(processExecution, (x) => `${x.file}:${x.module}:${x.callee}`),
-    dynamicImports: uniq(dynamicImports, (x) => `${x.file}:${x.specifier}`),
-    nonLiteralDynamicImports: uniq(nonLiteralDynamicImports, (x) => `${x.file}:${x.expression}`),
-    dynamicCode: uniq(dynamicCode, (x) => `${x.file}:${x.kind}`),
-    filesystemWrites: uniq(filesystemWrites, (x) => `${x.file}:${x.callee}`),
+    processExecution: uniq(processExecution, (x) => x.file + ':' + x.module + ':' + x.callee),
+    dynamicImports: uniq(dynamicImports, (x) => x.file + ':' + x.specifier),
+    nonLiteralDynamicImports: uniq(nonLiteralDynamicImports, (x) => x.file + ':' + x.expression),
+    dynamicCode: uniq(dynamicCode, (x) => x.file + ':' + x.kind),
+    filesystemWrites: uniq(filesystemWrites, (x) => x.file + ':' + x.callee),
     staticUrlHosts: [...staticUrlHosts].sort(),
     networkUrlEnvVars: [...networkUrlEnvVars].sort(),
   };
 }
 
-function extractImplicitAuthScopes() {
-  const path = 'src/server.ts';
-  const source = readFileSync(path, 'utf8');
+export function extractImplicitAuthScopesFromSource(source, path = 'src/server.ts') {
   const sf = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const scopes = new Set();
+  const candidates = new Map();
+  const usedScopeSets = new Set();
+  const inlineScopes = new Set();
 
-  function visit(node) {
+  function setLiterals(node) {
     if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === 'scopeSet' &&
-      node.initializer &&
-      ts.isNewExpression(node.initializer) &&
-      ts.isIdentifier(node.initializer.expression) &&
-      node.initializer.expression.text === 'Set'
+      !node ||
+      !ts.isNewExpression(node) ||
+      !ts.isIdentifier(node.expression) ||
+      node.expression.text !== 'Set'
     ) {
-      const first = node.initializer.arguments?.[0];
-      if (first && ts.isArrayLiteralExpression(first)) {
-        for (const element of first.elements) {
-          if (ts.isStringLiteralLike(element)) scopes.add(element.text);
-        }
+      return [];
+    }
+    const first = node.arguments?.[0];
+    if (!first || !ts.isArrayLiteralExpression(first)) return [];
+    return first.elements.filter(ts.isStringLiteralLike).map((element) => element.text);
+  }
+
+  function findScopeSetReferences(node) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'Array' &&
+      node.expression.name.text === 'from' &&
+      node.arguments[0]
+    ) {
+      const arg = node.arguments[0];
+      if (ts.isIdentifier(arg)) {
+        usedScopeSets.add(arg.text);
+      } else {
+        for (const scope of setLiterals(arg)) inlineScopes.add(scope);
       }
     }
+    ts.forEachChild(node, findScopeSetReferences);
+  }
+
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const literals = setLiterals(node.initializer);
+      if (literals.length) candidates.set(node.name.text, literals);
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'set' &&
+      node.arguments[0] &&
+      ts.isStringLiteralLike(node.arguments[0]) &&
+      node.arguments[0].text === 'scope' &&
+      node.arguments[1]
+    ) {
+      findScopeSetReferences(node.arguments[1]);
+    }
+
     ts.forEachChild(node, visit);
   }
 
   visit(sf);
+
+  const scopes = new Set(inlineScopes);
+  for (const name of usedScopeSets) {
+    for (const scope of candidates.get(name) ?? []) scopes.add(scope);
+  }
   return [...scopes].sort();
+}
+
+function extractImplicitAuthScopes() {
+  const path = 'src/server.ts';
+  return extractImplicitAuthScopesFromSource(readFileSync(path, 'utf8'), path);
 }
 
 function extractCloudNetworkHosts() {
@@ -359,7 +609,9 @@ export function buildSnapshot() {
       reason:
         'src/generated/client.ts is generated from mutable Microsoft Graph OpenAPI input and is not tracked; complete generated tool-schema fingerprinting becomes deterministic only after SM-5 pins the generation inputs.',
     },
-    criticalFileSha256: Object.fromEntries(CRITICAL_FILES.map((path) => [path, sha256File(path)])),
+    criticalFileSha256: Object.fromEntries(
+      listCriticalFiles().map((path) => [path, sha256File(path)])
+    ),
     mcpInstructionsSha256: sha256File('src/mcp-instructions.ts'),
     endpointsSha256: sha256File('src/endpoints.json'),
     endpointCount: endpoints.length,
@@ -411,7 +663,15 @@ export function validatePolicy(snapshot, policy) {
 
   const implicitScopeDiff = diffSet(policy.approvedImplicitAuthScopes, snapshot.implicitAuthScopes);
   if (implicitScopeDiff.added.length) {
-    failures.push(`unapproved implicit auth scopes: ${implicitScopeDiff.added.join(', ')}`);
+    failures.push('unapproved implicit auth scopes: ' + implicitScopeDiff.added.join(', '));
+  }
+  if (implicitScopeDiff.removed.length) {
+    failures.push(
+      'approved implicit auth scopes missing from source: ' + implicitScopeDiff.removed.join(', ')
+    );
+  }
+  if (snapshot.implicitAuthScopes.length === 0) {
+    failures.push('implicit auth scope inventory unexpectedly empty');
   }
 
   const hostDiff = diffSet(policy.approvedCloudNetworkHosts, snapshot.cloudNetworkHosts);
