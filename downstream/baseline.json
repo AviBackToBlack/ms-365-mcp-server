@@ -18,6 +18,7 @@
   },
   "downstream": {
     "repository": "https://github.com/AviBackToBlack/ms-365-mcp-server",
-    "versionScheme": "v<upstream-version>-abtb.<revision>"
+    "versionScheme": "v<upstream-version>-abtb.<revision>",
+    "versionSchemeStatus": "provisional"
   }
 }
