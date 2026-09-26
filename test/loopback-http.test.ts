@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createServer, request, type Server } from 'node:http';
+import { createServer, request, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import MicrosoftGraphServer, { isLoopbackHost, parseHttpOption } from '../src/server.js';
 import type AuthManager from '../src/auth.js';
@@ -49,6 +49,7 @@ async function ipv6LoopbackAvailable(): Promise<boolean> {
 interface RawResponse {
   status: number;
   body: string;
+  headers: IncomingHttpHeaders;
 }
 
 function send(
@@ -86,7 +87,7 @@ function send(
         let body = '';
         res.setEncoding('utf8');
         res.on('data', (chunk) => (body += chunk));
-        res.on('end', () => resolve({ status: res.statusCode!, body }));
+        res.on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
       }
     );
     req.on('error', reject);
@@ -142,6 +143,13 @@ describe('loopback HTTP bind', () => {
     beforeEach(async () => {
       port = await freePort();
       await start({ http: `127.0.0.1:${port}` });
+    });
+
+    it('sends a deny-all content security policy', async () => {
+      const response = await send(port, { headers: { Host: `localhost:${port}` } });
+      const csp = String(response.headers['content-security-policy'] ?? '');
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain("frame-ancestors 'none'");
     });
 
     it('accepts loopback Host headers regardless of case or port', async () => {
