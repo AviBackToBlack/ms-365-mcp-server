@@ -1272,9 +1272,7 @@ class AuthManager {
       if (selectedAccount) {
         return selectedAccount;
       }
-      logger.warn(
-        'Selected account not found, falling back to first account'
-      );
+      logger.warn('Selected account not found, falling back to first account');
     }
 
     // Fall back to first account (backward compatibility)

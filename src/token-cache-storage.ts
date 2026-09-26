@@ -433,9 +433,7 @@ async function readCacheKeys(): Promise<CacheKeyState> {
       try {
         keys.push(parseCacheKey(stored));
       } catch (error) {
-        logger.warn(
-          'Ignoring unusable auth cache key in the keychain'
-        );
+        logger.warn('Ignoring unusable auth cache key in the keychain');
       }
     }
   }

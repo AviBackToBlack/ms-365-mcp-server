@@ -99,7 +99,6 @@ describe('redactionEnabled', () => {
   });
 });
 
-
 describe('redactForLog', () => {
   const prev = process.env.MS365_MCP_REDACT_PII;
   afterEach(() => {
