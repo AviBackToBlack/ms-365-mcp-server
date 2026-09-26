@@ -51,4 +51,4 @@ SBOM generation, downstream artifact attestation, and release provenance remain 
 
 ## Gate self-tests
 
-The repository test suite includes negative fixtures for the supply-chain verifiers. The tests require a tampered lockfile hash and an unapproved advisory to fail closed. This is intentionally minimal coverage of the security boundary rather than exhaustive testing of npm itself.
+The repository test suite includes negative fixtures for the supply-chain verifiers. The tests require a tampered lockfile hash, an unapproved advisory, and a Node-version policy mismatch to fail closed. This is intentionally minimal coverage of the security boundary rather than exhaustive testing of npm itself.
