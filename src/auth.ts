@@ -864,7 +864,7 @@ class AuthManager {
       if (selectedAccountRaw) {
         const parsed = JSON.parse(unwrapCache(selectedAccountRaw).data);
         this.selectedAccountId = parsed.accountId;
-        logger.info(`Loaded selected account: ${this.selectedAccountId}`);
+        logger.info('Loaded selected account');
       }
     } catch (error) {
       logger.error(`Error loading selected account: ${(error as Error).message}`);
@@ -1273,7 +1273,7 @@ class AuthManager {
         return selectedAccount;
       }
       logger.warn(
-        `Selected account ${this.selectedAccountId} not found, falling back to first account`
+        'Selected account not found, falling back to first account'
       );
     }
 
@@ -1311,14 +1311,14 @@ class AuthManager {
       if (!this.selectedAccountId && response?.account) {
         this.selectedAccountId = response.account.homeAccountId;
         await this.saveSelectedAccount();
-        logger.info(`Auto-selected new account: ${response.account.username}`);
+        logger.info('Auto-selected newly authenticated account');
       }
 
       // MSAL persisted the new tokens via the cache plugin (afterCacheAccess) during the
       // acquire call; no manual save needed (issue #545).
       return this.accessToken;
     } catch (error) {
-      logger.error(`Error in device code flow: ${(error as Error).message}`);
+      logger.error('Device code flow failed');
       throw error;
     }
   }
@@ -1365,14 +1365,14 @@ class AuthManager {
       if (!this.selectedAccountId && response?.account) {
         this.selectedAccountId = response.account.homeAccountId;
         await this.saveSelectedAccount();
-        logger.info(`Auto-selected new account: ${response.account.username}`);
+        logger.info('Auto-selected newly authenticated account');
       }
 
       // MSAL persisted the new tokens via the cache plugin (afterCacheAccess) during the
       // acquire call; no manual save needed (issue #545).
       return this.accessToken;
     } catch (error) {
-      logger.error(`Error in interactive browser flow: ${(error as Error).message}`);
+      logger.error('Interactive browser flow failed');
       throw error;
     }
   }
@@ -1438,21 +1438,21 @@ class AuthManager {
           };
         } else {
           const errorText = await response.text();
-          logger.error(`Graph API user data fetch failed: ${response.status} - ${errorText}`);
+          logger.error(`Graph API user data fetch failed with HTTP ${response.status}`);
           return {
             success: false,
             message: `Login successful but Graph API access failed: ${response.status}`,
           };
         }
       } catch (graphError) {
-        logger.error(`Error fetching user data: ${(graphError as Error).message}`);
+        logger.error('Error fetching Graph user data');
         return {
           success: false,
           message: `Login successful but Graph API access failed: ${(graphError as Error).message}`,
         };
       }
     } catch (error) {
-      logger.error(`Login test failed: ${(error as Error).message}`);
+      logger.error('Login test failed');
       return {
         success: false,
         message: `Login failed: ${(error as Error).message}`,
