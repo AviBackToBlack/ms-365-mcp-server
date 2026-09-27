@@ -102,9 +102,9 @@ Literal dynamic imports are allowlisted by file + package specifier. Non-literal
 
 ## Filesystem write surface
 
-The snapshot records filesystem write-capability pairs by source file and callee, including Graph downloads, token-cache persistence, logging/audit files, and build-generation writes.
+The snapshot records filesystem write-capability pairs by source file and callee, including Graph downloads, token-cache persistence, logging/audit files, and build-generation writes. Namespace/default/require/getBuiltinModule acquisitions, dot or string-element write calls, destructured write bindings, and local aliases of reviewed write callees are normalized into the same capability inventory.
 
-A new file/callee write surface fails policy until explicitly reviewed. Security-critical file hashes make semantic changes to existing write paths review-visible even when the same API call remains in place.
+A new file/callee write surface fails policy until explicitly reviewed. Security-critical file hashes make semantic changes to existing write paths review-visible even when the same API call remains in place. SM-4 deliberately stops short of whole-program taint analysis: more exotic rebinding/dataflow remains covered by the critical-file hash delta plus CodeQL/Semgrep review rather than being claimed as exhaustively modeled by this custom AST inventory.
 
 ## PR security delta
 
