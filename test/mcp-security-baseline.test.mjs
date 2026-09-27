@@ -262,6 +262,60 @@ describe('MCP security baseline', () => {
     }
   });
 
+  it('detects fs element-access writes and local rebindings', () => {
+    const fixtures = [
+      {
+        source: ["import * as fs from 'node:fs';", "fs['writeFileSync']('/tmp/a', 'x');"].join(
+          '\n'
+        ),
+        callee: 'writeFileSync',
+      },
+      {
+        source: ["import fsDefault from 'fs';", "fsDefault['appendFileSync']('/tmp/a', 'x');"].join(
+          '\n'
+        ),
+        callee: 'appendFileSync',
+      },
+      {
+        source: "require('fs')['writeFileSync']('/tmp/a', 'x');",
+        callee: 'writeFileSync',
+      },
+      {
+        source: "process.getBuiltinModule('node:fs')['appendFileSync']('/tmp/a', 'x');",
+        callee: 'appendFileSync',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          'const { writeFileSync: write1 } = fs;',
+          "write1('/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+      {
+        source: [
+          "import { writeFileSync } from 'node:fs';",
+          'const write2 = writeFileSync;',
+          "write2('/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "const write3 = fs['writeFileSync'];",
+          "write3('/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+    ];
+
+    for (const { source, callee } of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.filesystemWrites.some((site) => site.callee === callee)).toBe(true);
+    }
+  });
+
   it('detects TypeScript import-equals and child_process re-exports', () => {
     const importEquals = scanFixture(
       ["import cp = require('child_process');", "cp.execSync('echo safe-fixture');"].join('\n'),
@@ -454,9 +508,19 @@ describe('MCP security baseline', () => {
 
   it('intentionally inventories env-style names even on non-env owners', () => {
     const scan = scanFixture(
-      ['const a = config.SOME_SERVICE_URL;', "const b = row['REDIRECT_URIS'];"].join('\n')
+      [
+        'const a = config.SOME_SERVICE_URL;',
+        "const b = row['REDIRECT_URIS'];",
+        'const c = config.INTERNAL_HOSTNAME;',
+        'const d = config.SERVICE_DOMAIN;',
+      ].join('\n')
     );
-    expect(scan.networkUrlEnvVars).toEqual(['REDIRECT_URIS', 'SOME_SERVICE_URL']);
+    expect(scan.networkUrlEnvVars).toEqual([
+      'INTERNAL_HOSTNAME',
+      'REDIRECT_URIS',
+      'SERVICE_DOMAIN',
+      'SOME_SERVICE_URL',
+    ]);
   });
 
   it('includes the verifier in its own capability boundary', () => {

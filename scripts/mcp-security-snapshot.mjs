@@ -58,7 +58,7 @@ const PROCESS_MODULES = new Set(['process', 'node:process']);
 const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
 const CREATE_REQUIRE_MODULES = new Set(['module', 'node:module']);
 const NETWORK_ENV_NAME_RE =
-  /^[A-Z][A-Z0-9_]*(?:_URLS?|_URIS?|_ENDPOINTS?|_HOSTS?|_ORIGINS?|_URL_BASES?)$/;
+  /^[A-Z][A-Z0-9_]*(?:_URLS?|_URIS?|_ENDPOINTS?|_HOSTS?|_HOSTNAMES?|_DOMAINS?|_ORIGINS?|_URL_BASES?)$/;
 const MUTABLE_GENERATED_FILES = new Set(['src/generated/client.ts']);
 const CODE_EXTENSIONS = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 
@@ -320,6 +320,35 @@ export function scanCode(files) {
           }
         }
       }
+    }
+
+    function fsWriteMember(node) {
+      const expr = unwrapExpression(node);
+      if (!expr) return undefined;
+
+      let owner;
+      let callee;
+      if (ts.isPropertyAccessExpression(expr)) {
+        owner = unwrapExpression(expr.expression);
+        callee = expr.name.text;
+      } else if (
+        ts.isElementAccessExpression(expr) &&
+        expr.argumentExpression &&
+        ts.isStringLiteralLike(expr.argumentExpression)
+      ) {
+        owner = unwrapExpression(expr.expression);
+        callee = expr.argumentExpression.text;
+      } else {
+        return undefined;
+      }
+
+      if (!FS_WRITE_CALLEES.has(callee)) return undefined;
+
+      if (ts.isIdentifier(owner) && fsNamespaces.has(owner.text)) return callee;
+      const mod = requireModule(owner);
+      if (mod && FS_MODULES.has(mod)) return callee;
+
+      return undefined;
     }
 
     function unwrapExpression(node) {
@@ -611,6 +640,32 @@ export function scanCode(files) {
 
         if (
           ts.isVariableDeclaration(node) &&
+          ts.isObjectBindingPattern(node.name) &&
+          initializer &&
+          ts.isIdentifier(initializer) &&
+          fsNamespaces.has(initializer.text)
+        ) {
+          for (const element of node.name.elements) {
+            if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
+            const imported = element.propertyName?.getText(sf) ?? element.name.text;
+            const normalized = imported.replace(/^['"]|['"]$/g, '');
+            if (FS_WRITE_CALLEES.has(normalized)) {
+              fsImports.set(element.name.text, normalized);
+            }
+          }
+        }
+
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && initializer) {
+          if (ts.isIdentifier(initializer) && fsImports.has(initializer.text)) {
+            fsImports.set(node.name.text, fsImports.get(initializer.text));
+          } else {
+            const reboundFsWrite = fsWriteMember(initializer);
+            if (reboundFsWrite) fsImports.set(node.name.text, reboundFsWrite);
+          }
+        }
+
+        if (
+          ts.isVariableDeclaration(node) &&
           ts.isIdentifier(node.name) &&
           initializer &&
           ts.isCallExpression(initializer)
@@ -807,22 +862,15 @@ export function scanCode(files) {
         if (ts.isIdentifier(node.expression) && fsImports.has(node.expression.text)) {
           const callee = fsImports.get(node.expression.text);
           if (FS_WRITE_CALLEES.has(callee)) filesystemWrites.push({ file: rel, callee });
-        } else if (ts.isPropertyAccessExpression(node.expression)) {
-          const owner = node.expression.expression;
-          const callee = node.expression.name.text;
-          if (
-            ts.isIdentifier(owner) &&
-            fsNamespaces.has(owner.text) &&
-            FS_WRITE_CALLEES.has(callee)
-          ) {
-            filesystemWrites.push({ file: rel, callee });
-          } else {
-            const mod = requireModule(owner);
-            if (mod && FS_MODULES.has(mod) && FS_WRITE_CALLEES.has(callee)) {
-              filesystemWrites.push({ file: rel, callee });
-            } else if (FS_WRITE_CALLEES.has(callee)) {
-              filesystemWrites.push({ file: rel, callee });
-            }
+        } else {
+          const acquiredFsWrite = fsWriteMember(node.expression);
+          if (acquiredFsWrite) {
+            filesystemWrites.push({ file: rel, callee: acquiredFsWrite });
+          } else if (callMethod && FS_WRITE_CALLEES.has(callMethod)) {
+            // Conservative name-based backstop: preserve the historical behavior
+            // where any dot-style write callee is review-visible, and extend it
+            // equally to string element access.
+            filesystemWrites.push({ file: rel, callee: callMethod });
           }
         }
       }

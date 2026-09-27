@@ -11,7 +11,7 @@
     "bin/modules/extract-descriptions.mjs": "b591088dbd743b39190f5133f58da5c448e641d2a41a1f248ffea10e2bf11fc1",
     "bin/modules/generate-mcp-tools.mjs": "b19863a738ce68fd25ebb78e12b11bf5e17a0f79eacb1e289f3b71f585561e65",
     "bin/modules/simplified-openapi.mjs": "24a43b484370dd7453b0c2e89cbe76398740deb0a7cbd7a5d8dce86c23daeaa4",
-    "scripts/mcp-security-snapshot.mjs": "652ccc25ecd0807dc647bb4c434ad82652f80573419b564015ca6cbfd83d349b",
+    "scripts/mcp-security-snapshot.mjs": "c086dc655f0edd393e7fb05db36451f355d65d7505246f4e816f977671af8744",
     "scripts/verify-npm-audit.mjs": "5ba3d376760b646cf649f876c4365b9e2fccb15634e9cfa185a9f2fb92152845",
     "scripts/verify-supply-chain.mjs": "31b53257e352813eccac6c490b3a65b400e865862cac9ff6bc514a097d4555a9",
     "src/attachment-route.ts": "ade4d472abd1d09c9a72eb3e45f51549c230c28b347b18fd9bbff76d30b04482",
