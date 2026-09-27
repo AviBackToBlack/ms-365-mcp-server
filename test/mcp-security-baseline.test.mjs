@@ -316,6 +316,75 @@ describe('MCP security baseline', () => {
     }
   });
 
+  it('covers the reviewed node:fs mutation vocabulary', () => {
+    const scan = scanFixture(
+      [
+        "import * as fs from 'node:fs';",
+        "fs.linkSync('/tmp/a', '/tmp/b');",
+        "fs.symlinkSync('/tmp/a', '/tmp/c');",
+        "fs.truncateSync('/tmp/a', 0);",
+        "fs.cpSync('/tmp/a', '/tmp/d');",
+        "fs.mkdtempSync('/tmp/prefix-');",
+        "fs.rmdirSync('/tmp/d');",
+        "fs.writeSync(1, 'x');",
+        "fs.writevSync(1, [Buffer.from('x')]);",
+        "fs.chownSync('/tmp/a', 0, 0);",
+        "fs.utimesSync('/tmp/a', new Date(), new Date());",
+        'fs.fchmodSync(1, 0o600);',
+        "new fs.WriteStream('/tmp/e');",
+      ].join('\n')
+    );
+
+    for (const callee of [
+      'linkSync',
+      'symlinkSync',
+      'truncateSync',
+      'cpSync',
+      'mkdtempSync',
+      'rmdirSync',
+      'writeSync',
+      'writevSync',
+      'chownSync',
+      'utimesSync',
+      'fchmodSync',
+      'WriteStream',
+    ]) {
+      expect(scan.filesystemWrites.some((site) => site.callee === callee)).toBe(true);
+    }
+  });
+
+  it('fails closed on structuredClone of an env-shaped object', () => {
+    const scan = scanFixture(
+      ['const env = process.env;', 'const copy = structuredClone(env);', 'void copy;'].join('\n')
+    );
+    expect(scan.networkUrlEnvVars).toContain('<dynamic>');
+  });
+
+  it('does not let a runtime file hide under __tests__', () => {
+    const dir = join(process.cwd(), 'src', '__tests__');
+    const path = join(dir, '__sm4_runtime_probe.ts');
+    writeFileSync(
+      path,
+      [
+        "import { writeFileSync } from 'node:fs';",
+        "writeFileSync('/tmp/sm4-runtime-probe', 'x');",
+      ].join('\n')
+    );
+
+    try {
+      const snapshot = buildSnapshot();
+      expect(snapshot.criticalFileSha256['src/__tests__/__sm4_runtime_probe.ts']).toMatch(
+        /^[0-9a-f]{64}$/
+      );
+      expect(snapshot.filesystemWrites).toContainEqual({
+        file: 'src/__tests__/__sm4_runtime_probe.ts',
+        callee: 'writeFileSync',
+      });
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
   it('detects TypeScript import-equals and child_process re-exports', () => {
     const importEquals = scanFixture(
       ["import cp = require('child_process');", "cp.execSync('echo safe-fixture');"].join('\n'),

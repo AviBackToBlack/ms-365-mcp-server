@@ -173,6 +173,10 @@
       "file": "src/token-cache-storage.ts"
     },
     {
+      "callee": "linkSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
       "callee": "mkdirSync",
       "file": "src/token-cache-storage.ts"
     },

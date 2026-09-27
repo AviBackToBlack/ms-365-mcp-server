@@ -30,25 +30,64 @@ const NETWORK_FILES = [
 ];
 
 const FS_WRITE_CALLEES = new Set([
+  'WriteStream',
   'appendFile',
   'appendFileSync',
   'chmod',
   'chmodSync',
+  'chown',
+  'chownSync',
   'copyFile',
   'copyFileSync',
+  'cp',
+  'cpSync',
   'createWriteStream',
+  'fchmod',
+  'fchmodSync',
+  'fchown',
+  'fchownSync',
+  'fdatasync',
+  'fdatasyncSync',
+  'fsync',
+  'fsyncSync',
+  'ftruncate',
+  'ftruncateSync',
+  'futimes',
+  'futimesSync',
+  'lchmod',
+  'lchmodSync',
+  'lchown',
+  'lchownSync',
+  'link',
+  'linkSync',
+  'lutimes',
+  'lutimesSync',
   'mkdir',
   'mkdirSync',
+  'mkdtemp',
+  'mkdtempSync',
   'open',
   'openSync',
   'rename',
   'renameSync',
   'rm',
   'rmSync',
+  'rmdir',
+  'rmdirSync',
+  'symlink',
+  'symlinkSync',
+  'truncate',
+  'truncateSync',
   'unlink',
   'unlinkSync',
+  'utimes',
+  'utimesSync',
+  'write',
   'writeFile',
   'writeFileSync',
+  'writeSync',
+  'writev',
+  'writevSync',
 ]);
 
 const CHILD_PROCESS_MODULES = new Set(['child_process', 'node:child_process']);
@@ -92,20 +131,25 @@ function flattenStrings(value, out = []) {
   return out;
 }
 
+function isTestSource(path) {
+  return /(?:^|\/)[^/]+\.(?:test|spec)\.(?:ts|mts|cts|js|mjs|cjs)$/.test(
+    relative(ROOT, path).replaceAll('\\', '/')
+  );
+}
+
 function walkFiles(dir) {
   const out = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const st = statSync(path);
     if (st.isDirectory()) {
-      if (name === '__tests__') continue;
       out.push(...walkFiles(path));
       continue;
     }
 
     const rel = relative(ROOT, path).replaceAll('\\', '/');
     if (MUTABLE_GENERATED_FILES.has(rel)) continue;
-    if (CODE_EXTENSIONS.has(extname(path))) out.push(path);
+    if (CODE_EXTENSIONS.has(extname(path)) && !isTestSource(path)) out.push(path);
   }
   return out;
 }
@@ -764,6 +808,14 @@ export function scanCode(files) {
           callMethod = callExpr.argumentExpression.text;
         }
 
+        if (
+          ts.isIdentifier(callExpr) &&
+          callExpr.text === 'structuredClone' &&
+          node.arguments.some((arg) => isEnvShapedObject(arg))
+        ) {
+          networkUrlEnvVars.add('<dynamic>');
+        }
+
         if (callOwner && callMethod) {
           const ownerTarget = dynamicCodeTarget(callOwner);
           if (ownerTarget && ['call', 'apply', 'bind'].includes(callMethod)) {
@@ -878,6 +930,9 @@ export function scanCode(files) {
       if (ts.isNewExpression(node)) {
         const dynamicTarget = dynamicCodeTarget(node.expression);
         if (dynamicTarget) dynamicCode.push({ file: rel, kind: 'new ' + dynamicTarget });
+
+        const fsConstructor = fsWriteMember(node.expression);
+        if (fsConstructor) filesystemWrites.push({ file: rel, callee: fsConstructor });
       }
 
       if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
