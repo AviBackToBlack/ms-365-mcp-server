@@ -455,6 +455,51 @@ describe('MCP security baseline', () => {
     );
   });
 
+  it('binds require-acquired process modules and preserves the vm ban', () => {
+    const fixtures = [
+      "require('node:process').getBuiltinModule('vm');",
+      "const p = require('node:process'); p.getBuiltinModule('vm');",
+      "const { getBuiltinModule } = require('node:process'); getBuiltinModule('vm');",
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.dynamicCode.some((site) => site.kind === 'module vm')).toBe(true);
+    }
+  });
+
+  it('normalizes require-family indirect calls and node:module createRequire receivers', () => {
+    const vmFixtures = [
+      "require.call(null, 'vm');",
+      "require.apply(null, ['vm']);",
+      "Reflect.apply(require, null, ['vm']);",
+      "(0, require)('vm');",
+    ];
+
+    for (const source of vmFixtures) {
+      const scan = scanFixture(source);
+      expect(scan.dynamicCode.some((site) => site.kind === 'module vm')).toBe(true);
+    }
+
+    const dynamicFixtures = [
+      [
+        "const r = require('node:module').createRequire(import.meta.url);",
+        "const name = 'v' + 'm';",
+        'r(name);',
+      ].join('\n'),
+      [
+        "const name = 'v' + 'm';",
+        "require('node:module').createRequire(import.meta.url)(name);",
+      ].join('\n'),
+      "const name = 'v' + 'm'; import x = require(name);",
+    ];
+
+    for (const source of dynamicFixtures) {
+      const scan = scanFixture(source);
+      expect(scan.nonLiteralModuleAcquisitions.length).toBeGreaterThan(0);
+    }
+  });
+
   it('tracks bare WriteStream construction and fs.promises/rebound calls', () => {
     const fixtures = [
       {
@@ -498,6 +543,28 @@ describe('MCP security baseline', () => {
         ].join('\n'),
         callee: 'writeFileSync',
       },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "Reflect.construct(fs.WriteStream, ['/tmp/a']);",
+        ].join('\n'),
+        callee: 'WriteStream',
+      },
+      {
+        source: [
+          "import { writeFileSync } from 'node:fs';",
+          "writeFileSync.call(null, '/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "const { writeFile } = fs['promises'];",
+          "writeFile('/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFile',
+      },
     ];
 
     for (const { source, callee } of fixtures) {
@@ -516,6 +583,17 @@ describe('MCP security baseline', () => {
       file: dynamicFs.filesystemWrites[0].file,
       callee: '<dynamic>',
     });
+
+    const dynamicPromiseFs = scanFixture(
+      [
+        "import * as fs from 'node:fs';",
+        'const key = getMethod();',
+        "fs['promises'][key]('/tmp/a', 'x');",
+      ].join('\n')
+    );
+    expect(dynamicPromiseFs.filesystemWrites.some((site) => site.callee === '<dynamic>')).toBe(
+      true
+    );
   });
 
   it('hashes test-named source files without capability-scanning them', () => {
@@ -743,6 +821,19 @@ describe('MCP security baseline', () => {
     expect(kinds).toContain('Reflect.apply eval');
     expect(kinds).toContain('Reflect.construct Function');
     expect(kinds).toContain('alias Function.prototype.constructor');
+  });
+
+  it('detects wholesale env access through globalThis builtins', () => {
+    const fixtures = [
+      'globalThis.structuredClone(process.env);',
+      'globalThis.Object.keys(process.env);',
+      'globalThis.Reflect.get(process.env, getKey());',
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.networkUrlEnvVars).toContain('<dynamic>');
+    }
   });
 
   it('does not classify unrelated computed parameter destructuring as dynamic env access', () => {
