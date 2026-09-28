@@ -12,9 +12,9 @@ const POLICY_PATH = 'downstream/mcp-security-policy.json';
 
 function listCriticalFiles() {
   const codeFiles = [
-    ...walkFiles(join(ROOT, 'src')),
-    ...walkFiles(join(ROOT, 'bin')),
-    ...walkFiles(join(ROOT, 'scripts')),
+    ...walkFiles(join(ROOT, 'src'), { includeTestSources: true }),
+    ...walkFiles(join(ROOT, 'bin'), { includeTestSources: true }),
+    ...walkFiles(join(ROOT, 'scripts'), { includeTestSources: true }),
   ].map((path) => relative(ROOT, path).replaceAll('\\', '/'));
   return [...new Set([...codeFiles, 'src/endpoints.json'])].sort();
 }
@@ -137,19 +137,21 @@ function isTestSource(path) {
   );
 }
 
-function walkFiles(dir) {
+function walkFiles(dir, { includeTestSources = false } = {}) {
   const out = [];
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const st = statSync(path);
     if (st.isDirectory()) {
-      out.push(...walkFiles(path));
+      out.push(...walkFiles(path, { includeTestSources }));
       continue;
     }
 
     const rel = relative(ROOT, path).replaceAll('\\', '/');
     if (MUTABLE_GENERATED_FILES.has(rel)) continue;
-    if (CODE_EXTENSIONS.has(extname(path)) && !isTestSource(path)) out.push(path);
+    if (CODE_EXTENSIONS.has(extname(path)) && (includeTestSources || !isTestSource(path))) {
+      out.push(path);
+    }
   }
   return out;
 }
@@ -164,6 +166,7 @@ export function scanCode(files) {
   const processExecution = [];
   const dynamicImports = [];
   const nonLiteralDynamicImports = [];
+  const nonLiteralModuleAcquisitions = [];
   const dynamicCode = [];
   const filesystemWrites = [];
   const staticUrlHosts = new Set();
@@ -278,26 +281,31 @@ export function scanCode(files) {
       return undefined;
     }
 
-    function requireModule(node) {
+    function requireLikeKind(node) {
       const call = unwrapExpression(node);
-      if (!call || !ts.isCallExpression(call) || call.arguments.length === 0) return undefined;
-      const arg = call.arguments[0];
-      if (!ts.isStringLiteralLike(arg)) return undefined;
+      if (!call || !ts.isCallExpression(call)) return undefined;
 
       const callee = unwrapExpression(call.expression);
       if (ts.isIdentifier(callee) && requireAliases.has(callee.text)) {
-        return arg.text;
+        return 'require';
       }
       if (ts.isIdentifier(callee) && getBuiltinModuleAliases.has(callee.text)) {
-        return arg.text;
+        return 'getBuiltinModule';
       }
 
-      if (
-        ts.isCallExpression(callee) &&
-        ts.isIdentifier(unwrapExpression(callee.expression)) &&
-        createRequireImports.has(unwrapExpression(callee.expression).text)
-      ) {
-        return arg.text;
+      if (ts.isCallExpression(callee)) {
+        const factory = unwrapExpression(callee.expression);
+        if (ts.isIdentifier(factory) && createRequireImports.has(factory.text)) {
+          return 'createRequire';
+        }
+        if (
+          ts.isPropertyAccessExpression(factory) &&
+          ts.isIdentifier(unwrapExpression(factory.expression)) &&
+          moduleNamespaces.has(unwrapExpression(factory.expression).text) &&
+          factory.name.text === 'createRequire'
+        ) {
+          return 'createRequire';
+        }
       }
 
       if (
@@ -305,7 +313,7 @@ export function scanCode(files) {
         isProcessObject(callee.expression) &&
         callee.name.text === 'getBuiltinModule'
       ) {
-        return arg.text;
+        return 'getBuiltinModule';
       }
 
       if (
@@ -315,10 +323,19 @@ export function scanCode(files) {
         ts.isStringLiteralLike(callee.argumentExpression) &&
         callee.argumentExpression.text === 'getBuiltinModule'
       ) {
-        return arg.text;
+        return 'getBuiltinModule';
       }
 
       return undefined;
+    }
+
+    function requireModule(node) {
+      const call = unwrapExpression(node);
+      if (!call || !ts.isCallExpression(call) || call.arguments.length === 0) return undefined;
+      if (!requireLikeKind(call)) return undefined;
+      const arg = call.arguments[0];
+      if (!ts.isStringLiteralLike(arg)) return undefined;
+      return arg.text;
     }
 
     function bindRequiredModule(name, mod) {
@@ -366,6 +383,24 @@ export function scanCode(files) {
       }
     }
 
+    function isFsNamespaceObject(node) {
+      const expr = unwrapExpression(node);
+      if (!expr) return false;
+      if (ts.isIdentifier(expr) && fsNamespaces.has(expr.text)) return true;
+
+      if (
+        ts.isPropertyAccessExpression(expr) &&
+        expr.name.text === 'promises' &&
+        ts.isIdentifier(unwrapExpression(expr.expression)) &&
+        fsNamespaces.has(unwrapExpression(expr.expression).text)
+      ) {
+        return true;
+      }
+
+      const mod = requireModule(expr);
+      return !!mod && FS_MODULES.has(mod);
+    }
+
     function fsWriteMember(node) {
       const expr = unwrapExpression(node);
       if (!expr) return undefined;
@@ -388,9 +423,7 @@ export function scanCode(files) {
 
       if (!FS_WRITE_CALLEES.has(callee)) return undefined;
 
-      if (ts.isIdentifier(owner) && fsNamespaces.has(owner.text)) return callee;
-      const mod = requireModule(owner);
-      if (mod && FS_MODULES.has(mod)) return callee;
+      if (isFsNamespaceObject(owner)) return callee;
 
       return undefined;
     }
@@ -686,8 +719,7 @@ export function scanCode(files) {
           ts.isVariableDeclaration(node) &&
           ts.isObjectBindingPattern(node.name) &&
           initializer &&
-          ts.isIdentifier(initializer) &&
-          fsNamespaces.has(initializer.text)
+          isFsNamespaceObject(initializer)
         ) {
           for (const element of node.name.elements) {
             if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
@@ -790,6 +822,18 @@ export function scanCode(files) {
           }
         }
 
+        const requireKind = requireLikeKind(node);
+        if (requireKind) {
+          const arg = node.arguments[0];
+          if (!arg || !ts.isStringLiteralLike(arg)) {
+            nonLiteralModuleAcquisitions.push({
+              file: rel,
+              kind: requireKind,
+              expression: arg?.getText(sf) ?? '<missing>',
+            });
+          }
+        }
+
         const dynamicTarget = dynamicCodeTarget(node.expression);
         if (dynamicTarget) dynamicCode.push({ file: rel, kind: 'call ' + dynamicTarget });
 
@@ -816,7 +860,21 @@ export function scanCode(files) {
           networkUrlEnvVars.add('<dynamic>');
         }
 
+        if (
+          ts.isElementAccessExpression(callExpr) &&
+          isFsNamespaceObject(callExpr.expression) &&
+          callExpr.argumentExpression &&
+          !ts.isStringLiteralLike(callExpr.argumentExpression)
+        ) {
+          filesystemWrites.push({ file: rel, callee: '<dynamic>' });
+        }
+
         if (callOwner && callMethod) {
+          const reboundFsWrite = fsWriteMember(callOwner);
+          if (reboundFsWrite && ['call', 'apply'].includes(callMethod)) {
+            filesystemWrites.push({ file: rel, callee: reboundFsWrite });
+          }
+
           const ownerTarget = dynamicCodeTarget(callOwner);
           if (ownerTarget && ['call', 'apply', 'bind'].includes(callMethod)) {
             dynamicCode.push({ file: rel, kind: callMethod + ' ' + ownerTarget });
@@ -833,6 +891,17 @@ export function scanCode(files) {
                 file: rel,
                 kind: 'Reflect.' + callMethod + ' ' + reflectTarget,
               });
+            }
+          }
+          if (
+            ts.isIdentifier(callOwner) &&
+            callOwner.text === 'Reflect' &&
+            callMethod === 'apply' &&
+            node.arguments[0]
+          ) {
+            const reflectFsWrite = fsWriteMember(node.arguments[0]);
+            if (reflectFsWrite) {
+              filesystemWrites.push({ file: rel, callee: reflectFsWrite });
             }
           }
 
@@ -931,8 +1000,13 @@ export function scanCode(files) {
         const dynamicTarget = dynamicCodeTarget(node.expression);
         if (dynamicTarget) dynamicCode.push({ file: rel, kind: 'new ' + dynamicTarget });
 
-        const fsConstructor = fsWriteMember(node.expression);
-        if (fsConstructor) filesystemWrites.push({ file: rel, callee: fsConstructor });
+        if (ts.isIdentifier(node.expression) && fsImports.has(node.expression.text)) {
+          const callee = fsImports.get(node.expression.text);
+          if (FS_WRITE_CALLEES.has(callee)) filesystemWrites.push({ file: rel, callee });
+        } else {
+          const fsConstructor = fsWriteMember(node.expression);
+          if (fsConstructor) filesystemWrites.push({ file: rel, callee: fsConstructor });
+        }
       }
 
       if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
@@ -955,6 +1029,10 @@ export function scanCode(files) {
     processExecution: uniq(processExecution, (x) => x.file + ':' + x.module + ':' + x.callee),
     dynamicImports: uniq(dynamicImports, (x) => x.file + ':' + x.specifier),
     nonLiteralDynamicImports: uniq(nonLiteralDynamicImports, (x) => x.file + ':' + x.expression),
+    nonLiteralModuleAcquisitions: uniq(
+      nonLiteralModuleAcquisitions,
+      (x) => x.file + ':' + x.kind + ':' + x.expression
+    ),
     dynamicCode: uniq(dynamicCode, (x) => x.file + ':' + x.kind),
     filesystemWrites: uniq(filesystemWrites, (x) => x.file + ':' + x.callee),
     staticUrlHosts: [...staticUrlHosts].sort(),
@@ -1141,6 +1219,7 @@ export function buildSnapshot() {
     processExecution: scan.processExecution,
     dynamicImports: scan.dynamicImports,
     nonLiteralDynamicImports: scan.nonLiteralDynamicImports,
+    nonLiteralModuleAcquisitions: scan.nonLiteralModuleAcquisitions,
     dynamicCode: scan.dynamicCode,
     filesystemWrites: scan.filesystemWrites,
   });
@@ -1192,6 +1271,17 @@ export function validatePolicy(snapshot, policy) {
     failures.push(`unapproved cloud network hosts: ${hostDiff.added.join(', ')}`);
   }
 
+  if (policy.approvedNetworkUrlEnvVars.includes('<dynamic>')) {
+    failures.push('policy must not approve the reserved <dynamic> network-env marker');
+  }
+  if (
+    policy.approvedFilesystemWrites.some(
+      (site) => site.callee === '<dynamic>' || site.callee === '*'
+    )
+  ) {
+    failures.push('policy must not approve reserved wildcard/dynamic filesystem-write markers');
+  }
+
   const envDiff = diffSet(policy.approvedNetworkUrlEnvVars, snapshot.networkUrlEnvVars);
   if (envDiff.added.length) {
     failures.push(`unapproved URL-bearing network env vars: ${envDiff.added.join(', ')}`);
@@ -1218,6 +1308,11 @@ export function validatePolicy(snapshot, policy) {
   if (snapshot.nonLiteralDynamicImports.length) {
     failures.push(
       `non-literal dynamic imports are forbidden: ${JSON.stringify(snapshot.nonLiteralDynamicImports)}`
+    );
+  }
+  if (snapshot.nonLiteralModuleAcquisitions.length) {
+    failures.push(
+      `non-literal module acquisitions are forbidden: ${JSON.stringify(snapshot.nonLiteralModuleAcquisitions)}`
     );
   }
   if (snapshot.dynamicCode.length) {
@@ -1259,6 +1354,7 @@ export function compareSnapshots(expected, actual) {
     'processExecution',
     'dynamicImports',
     'nonLiteralDynamicImports',
+    'nonLiteralModuleAcquisitions',
     'dynamicCode',
     'filesystemWrites',
   ]) {

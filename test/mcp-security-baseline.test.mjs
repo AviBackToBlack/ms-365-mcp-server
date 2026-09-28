@@ -385,6 +385,181 @@ describe('MCP security baseline', () => {
     }
   });
 
+  it('forbids non-literal require-like module acquisitions', () => {
+    const fixtures = [
+      {
+        source: "const name = 'v' + 'm'; require(name);",
+        kind: 'require',
+      },
+      {
+        source: [
+          "import { createRequire } from 'node:module';",
+          'const req = createRequire(import.meta.url);',
+          "const name = 'v' + 'm';",
+          'req(name);',
+        ].join('\n'),
+        kind: 'require',
+      },
+      {
+        source: [
+          "import * as moduleNs from 'node:module';",
+          'const req = moduleNs.createRequire(import.meta.url);',
+          "const name = 'v' + 'm';",
+          'req(name);',
+        ].join('\n'),
+        kind: 'require',
+      },
+      {
+        source: [
+          "import { createRequire } from 'node:module';",
+          "const name = 'v' + 'm';",
+          'createRequire(import.meta.url)(name);',
+        ].join('\n'),
+        kind: 'createRequire',
+      },
+      {
+        source: [
+          "import * as moduleNs from 'node:module';",
+          "const name = 'v' + 'm';",
+          'moduleNs.createRequire(import.meta.url)(name);',
+        ].join('\n'),
+        kind: 'createRequire',
+      },
+      {
+        source: ["const name = 'child' + '_process';", 'process.getBuiltinModule(name);'].join(
+          '\n'
+        ),
+        kind: 'getBuiltinModule',
+      },
+      {
+        source: [
+          'const getBuiltin = process.getBuiltinModule;',
+          "const name = 'v' + 'm';",
+          'getBuiltin(name);',
+        ].join('\n'),
+        kind: 'getBuiltinModule',
+      },
+    ];
+
+    for (const { source, kind } of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.nonLiteralModuleAcquisitions).toHaveLength(1);
+      expect(scan.nonLiteralModuleAcquisitions[0].kind).toBe(kind);
+    }
+
+    const scan = scanFixture("const name = 'v' + 'm'; process.getBuiltinModule(name);");
+    const snapshot = clone(baseline);
+    snapshot.nonLiteralModuleAcquisitions = scan.nonLiteralModuleAcquisitions;
+    expect(validatePolicy(snapshot, policy).join('\n')).toContain(
+      'non-literal module acquisitions are forbidden'
+    );
+  });
+
+  it('tracks bare WriteStream construction and fs.promises/rebound calls', () => {
+    const fixtures = [
+      {
+        source: ["import { WriteStream } from 'node:fs';", "new WriteStream('/tmp/a');"].join('\n'),
+        callee: 'WriteStream',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          'const { WriteStream: WS } = fs;',
+          "new WS('/tmp/a');",
+        ].join('\n'),
+        callee: 'WriteStream',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          'const { writeFile } = fs.promises;',
+          "writeFile('/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFile',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "fs.writeFileSync.call(fs, '/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "fs.writeFileSync.apply(fs, ['/tmp/a', 'x']);",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "Reflect.apply(fs.writeFileSync, fs, ['/tmp/a', 'x']);",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+    ];
+
+    for (const { source, callee } of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.filesystemWrites.some((site) => site.callee === callee)).toBe(true);
+    }
+
+    const dynamicFs = scanFixture(
+      [
+        "import * as fs from 'node:fs';",
+        'const key = getMethod();',
+        "fs[key]('/tmp/a', 'x');",
+      ].join('\n')
+    );
+    expect(dynamicFs.filesystemWrites).toContainEqual({
+      file: dynamicFs.filesystemWrites[0].file,
+      callee: '<dynamic>',
+    });
+  });
+
+  it('hashes test-named source files without capability-scanning them', () => {
+    const dir = join(process.cwd(), 'src', '__tests__');
+    const path = join(dir, '__sm4_hash_probe.test.ts');
+    writeFileSync(
+      path,
+      [
+        "import { writeFileSync } from 'node:fs';",
+        "writeFileSync('/tmp/sm4-hash-probe', 'x');",
+      ].join('\n')
+    );
+
+    try {
+      const snapshot = buildSnapshot();
+      expect(snapshot.criticalFileSha256['src/__tests__/__sm4_hash_probe.test.ts']).toMatch(
+        /^[0-9a-f]{64}$/
+      );
+      expect(snapshot.filesystemWrites).not.toContainEqual({
+        file: 'src/__tests__/__sm4_hash_probe.test.ts',
+        callee: 'writeFileSync',
+      });
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('does not allow policy to approve reserved dynamic or wildcard markers', () => {
+    const envPolicy = clone(policy);
+    envPolicy.approvedNetworkUrlEnvVars.push('<dynamic>');
+    expect(validatePolicy(baseline, envPolicy).join('\n')).toContain(
+      'policy must not approve the reserved <dynamic> network-env marker'
+    );
+
+    const fsPolicy = clone(policy);
+    fsPolicy.approvedFilesystemWrites.push({
+      file: 'src/example.ts',
+      callee: '*',
+    });
+    expect(validatePolicy(baseline, fsPolicy).join('\n')).toContain(
+      'policy must not approve reserved wildcard/dynamic filesystem-write markers'
+    );
+  });
+
   it('detects TypeScript import-equals and child_process re-exports', () => {
     const importEquals = scanFixture(
       ["import cp = require('child_process');", "cp.execSync('echo safe-fixture');"].join('\n'),
