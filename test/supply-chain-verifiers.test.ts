@@ -187,6 +187,7 @@ describe('npm audit policy fail-closed behavior', () => {
       vulnerabilities: {
         esbuild: {
           severity: 'moderate',
+          nodes: ['node_modules/esbuild'],
           via: [
             {
               source: 1120680,
@@ -200,6 +201,28 @@ describe('npm audit policy fail-closed behavior', () => {
     });
 
     expectFailure(result, 'severity changed from low to moderate');
+  });
+
+  it('rejects vulnerable-node drift for an accepted advisory', () => {
+    const dir = makeTempRepo();
+    const result = runAuditVerifier(dir, {
+      vulnerabilities: {
+        esbuild: {
+          severity: 'low',
+          nodes: ['node_modules/somewhere-else/esbuild'],
+          via: [
+            {
+              source: 1120680,
+              name: 'esbuild',
+              severity: 'low',
+              url: 'https://github.com/advisories/GHSA-g7r4-m6w7-qqqr',
+            },
+          ],
+        },
+      },
+    });
+
+    expectFailure(result, 'esbuild vulnerable nodes changed');
   });
 
   it('rejects a stale accepted-vulnerability entry', () => {
