@@ -33,13 +33,17 @@ This is verification of upstream package evidence, not proof that every dependen
 
 ## Accepted vulnerability
 
-The baseline currently accepts exactly one known advisory:
+The baseline currently accepts four exact advisories, each bound to the exact vulnerable `nodes` paths reported by `npm audit`:
 
-- `esbuild@0.27.4` - `GHSA-g7r4-m6w7-qqqr` - low severity, development scope.
+- `esbuild@0.27.4` - `GHSA-g7r4-m6w7-qqqr` - low severity, development scope, only at `node_modules/esbuild`.
+- `ip-address@10.5.0` - `GHSA-rpw4-54j3-4h4q` and `GHSA-2vr4-cq9g-pvrc` - moderate severity, verification-tooling scope, only at `node_modules/npm/node_modules/ip-address`.
+- `undici@6.28.0` - `GHSA-3wwx-pv8p-q78v` - moderate severity, verification-tooling scope, only at `node_modules/npm/node_modules/undici`.
 
-The advisory concerns esbuild's development server on Windows. The project does not invoke the esbuild serve API in approved build, test, or runtime paths. The fixed esbuild line starts at 0.28.1, while current `tsup@8.5.1` declares `esbuild ^0.27.0` and `tsx@4.21.0` declares `esbuild ~0.27.0`. Forcing an override solely to make an audit counter reach zero would put the dependency tree outside the tools' declared compatibility ranges.
+The esbuild advisory concerns its development server on Windows. The project does not invoke the esbuild serve API in approved build, test, or runtime paths. The fixed esbuild line starts at 0.28.1, while current `tsup@8.5.1` declares `esbuild ^0.27.0` and `tsx@4.21.0` declares `esbuild ~0.27.0`. Forcing an override solely to make an audit counter reach zero would put the dependency tree outside the tools' declared compatibility ranges.
 
-This exception is therefore explicit, machine-readable, and temporary. It must be revisited when any trigger listed in `downstream/supply-chain-policy.json` occurs.
+The two `ip-address` advisories and the `undici` advisory are retained only because the pinned `npm@11.20.0` verification CLI bundles those exact affected versions and `npm audit fix` cannot replace bundled dependencies. The ordinary dependency tree was refreshed to `ip-address@10.7.2`, `undici@6.29.0`, and `undici@7.30.0`, so the audit `nodes` arrays now contain only the pinned npm bundle paths above. The audit verifier requires those node sets to match exactly; the exceptions cannot silently cover a vulnerable copy elsewhere in the tree.
+
+These exceptions are explicit, machine-readable, path-bound, and temporary. They must be revisited when any trigger listed in `downstream/supply-chain-policy.json` occurs. If a fixed npm bundle removes an accepted advisory, the stale-exception check intentionally fails until the policy entry is removed.
 
 ## Updating the baseline
 
