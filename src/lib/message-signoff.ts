@@ -30,8 +30,7 @@ export class MessageSignoffError extends Error {
   }
 }
 
-function resolveEnvText(name: string, defaultValue?: string): string | undefined {
-  const raw = process.env[name];
+function resolveEnvText(raw: string | undefined, defaultValue?: string): string | undefined {
   if (raw === undefined) {
     return defaultValue;
   }
@@ -41,12 +40,12 @@ function resolveEnvText(name: string, defaultValue?: string): string | undefined
 
 /** The configured leading signoff text, or undefined when not configured. */
 export function resolveMessageSignoffPrefix(): string | undefined {
-  return resolveEnvText('MS365_MCP_MESSAGE_SIGNOFF_PREFIX');
+  return resolveEnvText(process.env.MS365_MCP_MESSAGE_SIGNOFF_PREFIX);
 }
 
 /** The configured trailing signoff text, or undefined when disabled. */
 export function resolveMessageSignoffSuffix(): string | undefined {
-  return resolveEnvText('MS365_MCP_MESSAGE_SIGNOFF_SUFFIX');
+  return resolveEnvText(process.env.MS365_MCP_MESSAGE_SIGNOFF_SUFFIX);
 }
 
 interface Parse5Node {

@@ -35,3 +35,11 @@ condition = "AND"
 targetRules = ["curl-auth-header"]
 commits = ["fd5e0e29a7e2a10a2d9f83a07ded0bf26d3fc718"]
 paths = ['''^README\.md$''']
+
+[[allowlists]]
+description = "Generated MCP security baseline contains SHA-256 fingerprints, not credentials"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^downstream/mcp-security-baseline\.json$''']
+regexTarget = "secret"
+regexes = ['''^[0-9a-f]{64}$''']

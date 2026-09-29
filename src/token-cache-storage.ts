@@ -82,7 +82,7 @@ const KEYTAR_ON_VALUES = new Set(['1', 'true', 'yes', 'on']);
  * than anywhere else.
  */
 export function keytarEnabled(): boolean {
-  const raw = process.env[USE_KEYTAR_ENV];
+  const raw = process.env.MS365_MCP_USE_KEYTAR;
   if (raw === undefined) return true;
 
   const value = raw.trim().toLowerCase();
@@ -1086,7 +1086,7 @@ export async function createTokenCacheStorage(
   options: CreateTokenCacheStorageOptions = {}
 ): Promise<TokenCacheStorage> {
   const allowCommandStorage = options.allowCommandStorage ?? true;
-  const configuredCommand = process.env[AUTH_CACHE_COMMAND_ENV];
+  const configuredCommand = process.env.MS365_MCP_AUTH_CACHE_COMMAND;
 
   let storage: TokenCacheStorage;
   if (allowCommandStorage && configuredCommand !== undefined) {
@@ -1097,7 +1097,7 @@ export async function createTokenCacheStorage(
     await assertCommandUsable(commandPath);
     storage = new CommandTokenCacheStorage(
       commandPath,
-      parseTimeoutMs(process.env[AUTH_CACHE_COMMAND_TIMEOUT_ENV])
+      parseTimeoutMs(process.env.MS365_MCP_AUTH_CACHE_COMMAND_TIMEOUT_MS)
     );
   } else {
     storage = new DefaultTokenCacheStorage();

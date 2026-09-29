@@ -28,6 +28,21 @@ for (const [packageName, finding] of Object.entries(vulnerabilities)) {
     continue;
   }
 
+  const expectedNodeSets = new Set(
+    allowedForPackage.map((item) => JSON.stringify([...(item.nodes ?? [])].sort()))
+  );
+  if (expectedNodeSets.size !== 1 || [...expectedNodeSets][0] === '[]') {
+    failures.push(`${packageName} accepted-vulnerability policy must define one exact nodes set`);
+  } else {
+    const expectedNodes = [...expectedNodeSets][0];
+    const actualNodes = JSON.stringify([...(finding.nodes ?? [])].sort());
+    if (actualNodes !== expectedNodes) {
+      failures.push(
+        `${packageName} vulnerable nodes changed: expected ${expectedNodes}, got ${actualNodes}`
+      );
+    }
+  }
+
   const directAdvisories = (finding.via ?? []).filter((item) => typeof item === 'object');
   if (!directAdvisories.length) {
     failures.push(`${packageName} has no directly attributable advisory in npm audit output`);

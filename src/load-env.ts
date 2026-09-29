@@ -25,7 +25,41 @@ export const ENV_FILE_ALLOWLIST = [
   'MS365_MCP_CLIENT_SECRET',
   'MS365_MCP_TENANT_ID',
   'MS365_MCP_CLOUD_TYPE',
-];
+] as const;
+
+type EnvFileKey = (typeof ENV_FILE_ALLOWLIST)[number];
+
+interface EnvFileBinding {
+  get(): string | undefined;
+  set(value: string): void;
+}
+
+const ENV_FILE_BINDINGS = {
+  MS365_MCP_CLIENT_ID: {
+    get: () => process.env.MS365_MCP_CLIENT_ID,
+    set: (value: string) => {
+      process.env.MS365_MCP_CLIENT_ID = value;
+    },
+  },
+  MS365_MCP_CLIENT_SECRET: {
+    get: () => process.env.MS365_MCP_CLIENT_SECRET,
+    set: (value: string) => {
+      process.env.MS365_MCP_CLIENT_SECRET = value;
+    },
+  },
+  MS365_MCP_TENANT_ID: {
+    get: () => process.env.MS365_MCP_TENANT_ID,
+    set: (value: string) => {
+      process.env.MS365_MCP_TENANT_ID = value;
+    },
+  },
+  MS365_MCP_CLOUD_TYPE: {
+    get: () => process.env.MS365_MCP_CLOUD_TYPE,
+    set: (value: string) => {
+      process.env.MS365_MCP_CLOUD_TYPE = value;
+    },
+  },
+} satisfies Record<EnvFileKey, EnvFileBinding>;
 
 export interface LoadEnvFileResult {
   /** Allowlisted keys taken from the file. */
@@ -52,16 +86,17 @@ export function loadEnvFile(options: { path?: string } = {}): LoadEnvFileResult 
   const ignored: string[] = [];
 
   for (const [key, value] of Object.entries(fromFile)) {
-    if (!ENV_FILE_ALLOWLIST.includes(key)) {
+    if (!ENV_FILE_ALLOWLIST.includes(key as EnvFileKey)) {
       ignored.push(key);
       continue;
     }
+    const allowedKey = key as EnvFileKey;
     // Anything already set came from the operator, so it wins - same precedence
     // dotenv itself uses.
-    if (process.env[key] !== undefined) {
+    if (ENV_FILE_BINDINGS[allowedKey].get() !== undefined) {
       continue;
     }
-    process.env[key] = value;
+    ENV_FILE_BINDINGS[allowedKey].set(value);
     applied.push(key);
   }
 

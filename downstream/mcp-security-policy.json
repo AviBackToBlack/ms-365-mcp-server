@@ -1,0 +1,220 @@
+{
+  "schemaVersion": 1,
+  "productionProfile": {
+    "mode": "stdio",
+    "orgMode": true,
+    "readOnly": true,
+    "allowedScopes": ["User.Read", "Mail.Read", "Calendars.Read", "Chat.Read", "Team.ReadBasic.All"]
+  },
+  "approvedGraphScopes": [
+    "Calendars.Read",
+    "Calendars.Read.Shared",
+    "Calendars.ReadWrite",
+    "CallTranscripts.Read.All",
+    "Channel.Create",
+    "Channel.Delete.All",
+    "Channel.ReadBasic.All",
+    "ChannelMessage.Read.All",
+    "ChannelMessage.ReadWrite",
+    "ChannelMessage.Send",
+    "ChannelSettings.Read.All",
+    "ChannelSettings.ReadWrite.All",
+    "Chat.Create",
+    "Chat.Read",
+    "Chat.ReadBasic",
+    "Chat.ReadWrite",
+    "ChatMember.Read",
+    "ChatMessage.Read",
+    "ChatMessage.Send",
+    "Contacts.Read",
+    "Contacts.ReadWrite",
+    "Directory.Read.All",
+    "ExternalItem.Read.All",
+    "Files.Read",
+    "Files.Read.All",
+    "Files.ReadWrite",
+    "Group.Read.All",
+    "Group.ReadWrite.All",
+    "GroupMember.Read.All",
+    "GroupMember.ReadWrite.All",
+    "Mail.Read",
+    "Mail.Read.Shared",
+    "Mail.ReadWrite",
+    "Mail.ReadWrite.Shared",
+    "Mail.Send",
+    "Mail.Send.Shared",
+    "MailboxSettings.Read",
+    "MailboxSettings.ReadWrite",
+    "Notes.Create",
+    "Notes.Read",
+    "Notes.ReadWrite",
+    "OnlineMeetingArtifact.Read.All",
+    "OnlineMeetingRecording.Read.All",
+    "OnlineMeetingTranscript.Read.All",
+    "OnlineMeetings.Read",
+    "OnlineMeetings.ReadWrite",
+    "People.Read",
+    "Place.Read.All",
+    "Place.ReadWrite.All",
+    "Presence.Read",
+    "Presence.Read.All",
+    "Presence.ReadWrite",
+    "SensitivityLabel.Read",
+    "Sites.Manage.All",
+    "Sites.Read.All",
+    "Sites.ReadWrite.All",
+    "Sites.Selected",
+    "Tasks.Read",
+    "Tasks.ReadWrite",
+    "Team.ReadBasic.All",
+    "TeamMember.Read.All",
+    "TeamMember.ReadWrite.All",
+    "TeamsActivity.Send",
+    "TeamsAppInstallation.ReadForUser",
+    "TeamsTab.Read.All",
+    "TeamworkCustomEmoji.Create",
+    "TeamworkCustomEmoji.Read",
+    "User.Read",
+    "User.Read.All",
+    "User.ReadWrite",
+    "VirtualEvent.Read"
+  ],
+  "approvedImplicitAuthScopes": ["User.Read", "offline_access"],
+  "approvedImplicitAuthScopePassthroughs": ["baseScopes"],
+  "approvedCloudNetworkHosts": [
+    "graph.microsoft.com",
+    "login.chinacloudapi.cn",
+    "login.microsoftonline.com",
+    "microsoftgraph.chinacloudapi.cn"
+  ],
+  "approvedNetworkUrlEnvVars": [
+    "MS365_MCP_ALLOWED_REDIRECT_URIS",
+    "MS365_MCP_ATTACHMENT_HOST",
+    "MS365_MCP_ATTACHMENT_URL_BASE",
+    "MS365_MCP_BASE_URL",
+    "MS365_MCP_CORS_ORIGIN",
+    "MS365_MCP_KEYVAULT_URL",
+    "MS365_MCP_PUBLIC_URL"
+  ],
+  "approvedProcessExecution": [
+    {
+      "callee": "execSync",
+      "file": "bin/modules/generate-mcp-tools.mjs",
+      "module": "child_process",
+      "reason": "Build-time generator invokes project tools; deterministic build hardening is completed in SM-5.",
+      "productionProfileAllowed": false
+    },
+    {
+      "callee": "spawn",
+      "file": "src/token-cache-storage.ts",
+      "module": "node:child_process",
+      "reason": "Optional external auth-cache storage command. It requires an explicitly configured absolute executable path and uses shell=false.",
+      "productionProfileAllowed": false
+    }
+  ],
+  "approvedFilesystemWrites": [
+    {
+      "callee": "mkdirSync",
+      "file": "bin/modules/download-openapi.mjs"
+    },
+    {
+      "callee": "writeFileSync",
+      "file": "bin/modules/download-openapi.mjs"
+    },
+    {
+      "callee": "mkdirSync",
+      "file": "bin/modules/generate-mcp-tools.mjs"
+    },
+    {
+      "callee": "writeFileSync",
+      "file": "bin/modules/generate-mcp-tools.mjs"
+    },
+    {
+      "callee": "writeFileSync",
+      "file": "bin/modules/simplified-openapi.mjs"
+    },
+    {
+      "callee": "writeFileSync",
+      "file": "scripts/mcp-security-snapshot.mjs"
+    },
+    {
+      "callee": "chmodSync",
+      "file": "src/audit-log.ts"
+    },
+    {
+      "callee": "mkdirSync",
+      "file": "src/audit-log.ts"
+    },
+    {
+      "callee": "createWriteStream",
+      "file": "src/graph-client.ts"
+    },
+    {
+      "callee": "open",
+      "file": "src/graph-client.ts"
+    },
+    {
+      "callee": "unlink",
+      "file": "src/graph-client.ts"
+    },
+    {
+      "callee": "chmodSync",
+      "file": "src/logger.ts"
+    },
+    {
+      "callee": "mkdirSync",
+      "file": "src/logger.ts"
+    },
+    {
+      "callee": "chmodSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
+      "callee": "copyFileSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
+      "callee": "linkSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
+      "callee": "mkdirSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
+      "callee": "renameSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
+      "callee": "unlinkSync",
+      "file": "src/token-cache-storage.ts"
+    },
+    {
+      "callee": "writeFileSync",
+      "file": "src/token-cache-storage.ts"
+    }
+  ],
+  "approvedDynamicImports": [
+    {
+      "file": "src/auth.ts",
+      "specifier": "open"
+    },
+    {
+      "file": "src/secrets.ts",
+      "specifier": "@azure/identity"
+    },
+    {
+      "file": "src/secrets.ts",
+      "specifier": "@azure/keyvault-secrets"
+    },
+    {
+      "file": "src/token-cache-storage.ts",
+      "specifier": "keytar"
+    }
+  ],
+  "forbiddenDynamicCode": ["eval", "new Function"],
+  "generatedSchemaCoverage": {
+    "reason": "src/generated/client.ts is generated from mutable Microsoft Graph OpenAPI input and is not tracked; complete generated tool-schema fingerprinting becomes deterministic only after SM-5 pins the generation inputs.",
+    "status": "deferred-to-SM-5"
+  }
+}

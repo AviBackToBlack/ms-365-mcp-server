@@ -3,7 +3,7 @@
   "lockfile": {
     "path": "package-lock.json",
     "lockfileVersion": 3,
-    "sha256": "030c2f9e145f574797de1379442839542037ca0575ba22ff1601a581ba3cc2f4",
+    "sha256": "775d81fa8038e3d8f9ec94cf54a9dc280ed527c826159847544a9cf553e0de12",
     "packageCount": 916,
     "registryPrefix": "https://registry.npmjs.org/",
     "integrityAlgorithm": "sha512"
@@ -51,6 +51,52 @@
         "the upstream toolchain permits esbuild >=0.28.1",
         "the repository starts using esbuild serve APIs",
         "Windows development-server use becomes part of an approved workflow",
+        "the next controlled upstream dependency refresh"
+      ],
+      "nodes": ["node_modules/esbuild"]
+    },
+    {
+      "package": "ip-address",
+      "advisory": "GHSA-2vr4-cq9g-pvrc",
+      "url": "https://github.com/advisories/GHSA-2vr4-cq9g-pvrc",
+      "severity": "moderate",
+      "scope": "verification-tooling",
+      "nodes": ["node_modules/npm/node_modules/ip-address"],
+      "reason": "The only remaining affected ip-address copy is 10.5.0 bundled inside pinned npm 11.20.0, used solely as the supply-chain verification CLI. All ordinary lockfile copies were refreshed to patched ip-address 10.7.2. npm audit fix cannot replace npm's bundled dependency, and the currently released npm package line still bundles an affected copy.",
+      "reviewTriggers": [
+        "the pinned verification npm version changes",
+        "a released npm package bundles ip-address >10.5.0",
+        "the advisory severity or affected range changes",
+        "the next controlled upstream dependency refresh"
+      ]
+    },
+    {
+      "package": "ip-address",
+      "advisory": "GHSA-rpw4-54j3-4h4q",
+      "url": "https://github.com/advisories/GHSA-rpw4-54j3-4h4q",
+      "severity": "moderate",
+      "scope": "verification-tooling",
+      "nodes": ["node_modules/npm/node_modules/ip-address"],
+      "reason": "The only remaining affected ip-address copy is 10.5.0 bundled inside pinned npm 11.20.0, used solely as the supply-chain verification CLI. All ordinary lockfile copies were refreshed to patched ip-address 10.7.2. npm audit fix cannot replace npm's bundled dependency, and the currently released npm package line still bundles an affected copy.",
+      "reviewTriggers": [
+        "the pinned verification npm version changes",
+        "a released npm package bundles ip-address >10.5.0",
+        "the advisory severity or affected range changes",
+        "the next controlled upstream dependency refresh"
+      ]
+    },
+    {
+      "package": "undici",
+      "advisory": "GHSA-3wwx-pv8p-q78v",
+      "url": "https://github.com/advisories/GHSA-3wwx-pv8p-q78v",
+      "severity": "moderate",
+      "scope": "verification-tooling",
+      "nodes": ["node_modules/npm/node_modules/undici"],
+      "reason": "The only remaining affected undici copy is 6.28.0 bundled inside pinned npm 11.20.0, used solely as the supply-chain verification CLI. Ordinary lockfile copies were refreshed to patched lines (6.29.0 and 7.30.0). npm audit fix cannot replace npm's bundled dependency, and the currently released npm package line still bundles an affected 6.28.0 copy.",
+      "reviewTriggers": [
+        "the pinned verification npm version changes",
+        "a released npm package bundles undici >=6.28.1 outside the affected range",
+        "the advisory severity or affected range changes",
         "the next controlled upstream dependency refresh"
       ]
     }

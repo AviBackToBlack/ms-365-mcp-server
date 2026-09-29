@@ -39,8 +39,7 @@ Experimental MCP-specific Semgrep rules are also not a blocking SM-3 input. A di
 run against Semgrep rules commit `a84ff9cc2453ca91d581380de4b8b3f272f6f4be` found that
 the current MCP SSRF rule has an unconstrained `$AXIOS($URL, ...)` sink that matches
 arbitrary function calls, including non-network calls. MCP-specific policy therefore
-remains a separate SM-6 concern where those rules can be validated or adapted before
-enforcement.
+is handled by SM-4, where MCP-specific rules and source-surface policy can be validated or adapted before enforcement.
 
 ## Secret and entropy scanning
 
@@ -58,6 +57,8 @@ allows them only when the detector rule, historical commit, and file path all ma
 exceptions are for a synthetic JWT fixture, Azure built-in role definition GUIDs, a
 Microsoft public client application identifier, and a synthetic bearer token in
 documentation. Future occurrences in those files are not exempt.
+
+SM-4 adds one semantic exception for `downstream/mcp-security-baseline.json`: the `generic-api-key` rule may ignore a value only when it is exactly a 64-character lowercase hexadecimal SHA-256 fingerprint. The exception is constrained by rule + path + value shape and exists because the baseline intentionally stores cryptographic file/tool fingerprints.
 
 ## Runtime hardening found during baseline establishment
 

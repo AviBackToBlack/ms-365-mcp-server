@@ -50,8 +50,7 @@ export interface ResilienceConfig {
 }
 
 export function loadResilienceConfig(): ResilienceConfig {
-  const intEnv = (name: string, fallback: number): number => {
-    const raw = process.env[name];
+  const intEnv = (name: string, raw: string | undefined, fallback: number): number => {
     if (raw === undefined || raw === '') return fallback;
     const n = Number.parseInt(raw, 10);
     if (!Number.isFinite(n) || n < 0) {
@@ -61,12 +60,32 @@ export function loadResilienceConfig(): ResilienceConfig {
     return n;
   };
   return {
-    maxRetries: intEnv('MS365_MCP_GRAPH_MAX_RETRIES', 3),
-    baseBackoffMs: intEnv('MS365_MCP_GRAPH_BASE_BACKOFF_MS', 200),
-    maxBackoffMs: intEnv('MS365_MCP_GRAPH_MAX_BACKOFF_MS', 5_000),
-    fetchTimeoutMs: intEnv('MS365_MCP_GRAPH_TIMEOUT_MS', 100_000),
-    circuitFailureThreshold: intEnv('MS365_MCP_GRAPH_CIRCUIT_THRESHOLD', 5),
-    circuitCooldownMs: intEnv('MS365_MCP_GRAPH_CIRCUIT_COOLDOWN_MS', 30_000),
+    maxRetries: intEnv('MS365_MCP_GRAPH_MAX_RETRIES', process.env.MS365_MCP_GRAPH_MAX_RETRIES, 3),
+    baseBackoffMs: intEnv(
+      'MS365_MCP_GRAPH_BASE_BACKOFF_MS',
+      process.env.MS365_MCP_GRAPH_BASE_BACKOFF_MS,
+      200
+    ),
+    maxBackoffMs: intEnv(
+      'MS365_MCP_GRAPH_MAX_BACKOFF_MS',
+      process.env.MS365_MCP_GRAPH_MAX_BACKOFF_MS,
+      5_000
+    ),
+    fetchTimeoutMs: intEnv(
+      'MS365_MCP_GRAPH_TIMEOUT_MS',
+      process.env.MS365_MCP_GRAPH_TIMEOUT_MS,
+      100_000
+    ),
+    circuitFailureThreshold: intEnv(
+      'MS365_MCP_GRAPH_CIRCUIT_THRESHOLD',
+      process.env.MS365_MCP_GRAPH_CIRCUIT_THRESHOLD,
+      5
+    ),
+    circuitCooldownMs: intEnv(
+      'MS365_MCP_GRAPH_CIRCUIT_COOLDOWN_MS',
+      process.env.MS365_MCP_GRAPH_CIRCUIT_COOLDOWN_MS,
+      30_000
+    ),
     circuitDisabled:
       process.env.MS365_MCP_GRAPH_CIRCUIT_DISABLED === 'true' ||
       process.env.MS365_MCP_GRAPH_CIRCUIT_DISABLED === '1',

@@ -46,6 +46,23 @@ describe('loadEnvFile', () => {
     expect(result.ignored).toEqual([]);
   });
 
+  it('has a working binding for every allowlisted key', () => {
+    for (const key of ENV_FILE_ALLOWLIST) {
+      delete process.env[key];
+    }
+
+    const file = writeEnvFile(
+      ENV_FILE_ALLOWLIST.map((key) => key + '=value-for-' + key).join('\n')
+    );
+    const result = loadEnvFile({ path: file });
+
+    expect(result.applied).toEqual([...ENV_FILE_ALLOWLIST]);
+    expect(result.ignored).toEqual([]);
+    for (const key of ENV_FILE_ALLOWLIST) {
+      expect(process.env[key]).toBe('value-for-' + key);
+    }
+  });
+
   // GHSA-9w34-3f56-vwmh: a .env in the launch directory used to be able to set
   // this, which the server then spawned at startup.
   it('does not let .env set the auth cache command', () => {
