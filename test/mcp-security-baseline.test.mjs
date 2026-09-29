@@ -520,6 +520,54 @@ describe('MCP security baseline', () => {
     }
   });
 
+  it('preserves bound require-family arguments and bound createRequire factories', () => {
+    const fixtures = [
+      "require.bind(null, 'vm')('ignored');",
+      "const r = require.bind(null, 'vm'); r('ignored');",
+      "import proc from 'node:process'; proc.getBuiltinModule.bind(proc, 'vm')('ignored');",
+      "import { createRequire } from 'node:module'; createRequire(import.meta.url).bind(null, 'vm')('ignored');",
+      "import { createRequire } from 'node:module'; createRequire.bind(null)(import.meta.url)('vm');",
+      "import * as m from 'node:module'; m.createRequire.bind(m)(import.meta.url)('vm');",
+      "import { createRequire } from 'node:module'; const f = createRequire.bind(null); f(import.meta.url)('vm');",
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.dynamicCode.some((site) => site.kind === 'module vm')).toBe(true);
+    }
+
+    const dynamicBound = scanFixture("const name = getName(); require.bind(null, name)('x');");
+    expect(dynamicBound.nonLiteralModuleAcquisitions.length).toBeGreaterThan(0);
+  });
+
+  it('normalizes global Reflect dynamic-code calls and single-hop constructors', () => {
+    const scan = scanFixture(
+      [
+        "globalThis.Reflect.apply(eval, null, ['1']);",
+        "const g = globalThis; g['Reflect'].construct(Function, ['return 1']);",
+        "const f = () => {}; f.constructor('return 1');",
+        "(async () => {})['constructor']('return 1');",
+      ].join('\n')
+    );
+    const kinds = scan.dynamicCode.map((entry) => entry.kind);
+    expect(kinds).toContain('Reflect.apply eval');
+    expect(kinds).toContain('Reflect.construct Function');
+    expect(kinds).toContain('call constructor');
+  });
+
+  it('fails closed on computed process/module namespace member acquisition', () => {
+    const fixtures = [
+      "const k = getMethod(); process[k]('vm');",
+      "const k = getMethod(); const g = process[k]; g('vm');",
+      "import * as m from 'node:module'; const k = getMethod(); m[k](import.meta.url);",
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.nonLiteralModuleAcquisitions.length).toBeGreaterThan(0);
+    }
+  });
+
   it('propagates fs, child-process and global-object aliases conservatively', () => {
     const fsBound = scanFixture(
       "import * as fs from 'node:fs'; const w = fs.writeFileSync.bind(fs); w('/tmp/a', 'x');"
@@ -541,6 +589,43 @@ describe('MCP security baseline', () => {
     );
     expect(globalAlias.dynamicCode.some((site) => site.kind === 'call globalThis.eval')).toBe(true);
     expect(globalAlias.networkUrlEnvVars).toContain('<dynamic>');
+  });
+
+  it('normalizes builtin aliases, global destructuring, and env writes', () => {
+    const scan = scanFixture(
+      [
+        "const R = Reflect; R.apply(eval, null, ['1']);",
+        "const { apply } = Reflect; apply(eval, null, ['1']);",
+        'const { keys } = Object; keys(process.env);',
+        'const sc = structuredClone; sc(process.env);',
+        'const g = globalThis; const { eval: e } = g; void e;',
+        "Reflect.set(process.env, getKey(), 'x');",
+        'Reflect.deleteProperty(process.env, getKey());',
+        "Object.defineProperty(process.env, 'X_URL', { value: 'x' });",
+      ].join('\n')
+    );
+
+    const kinds = scan.dynamicCode.map((entry) => entry.kind);
+    expect(kinds).toContain('Reflect.apply eval');
+    expect(kinds).toContain('alias globalThis.eval');
+    expect(scan.networkUrlEnvVars).toContain('<dynamic>');
+  });
+
+  it('tracks named-default process imports and side-effect execution-module imports', () => {
+    const processScan = scanFixture(
+      "import { default as p } from 'node:process'; p.getBuiltinModule('vm');"
+    );
+    expect(processScan.dynamicCode.some((entry) => entry.kind === 'module vm')).toBe(true);
+
+    const vmScan = scanFixture("import 'node:vm';");
+    expect(vmScan.dynamicCode.some((entry) => entry.kind === 'module node:vm')).toBe(true);
+
+    const childScan = scanFixture("import 'node:child_process';");
+    expect(
+      childScan.processExecution.some(
+        (entry) => entry.module === 'node:child_process' && entry.callee === '*'
+      )
+    ).toBe(true);
   });
 
   it('forbids constructor-chain dynamic code and process.dlopen', () => {
@@ -824,6 +909,41 @@ describe('MCP security baseline', () => {
     );
   });
 
+  it('covers additional URLSearchParams and search-assignment scope sink forms', () => {
+    expect(
+      extractImplicitAuthScopesFromSource(
+        "new URLSearchParams('scope=User.Read%20offline_access');"
+      )
+    ).toEqual(['User.Read', 'offline_access']);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        "new URLSearchParams([['scope', 'User.Read offline_access']]);"
+      )
+    ).toEqual(['User.Read', 'offline_access']);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        "const v = getScopes(); new URLSearchParams({ ['scope']: v });"
+      )
+    ).toContain('<dynamic:v>');
+
+    expect(
+      extractImplicitAuthScopesFromSource("url.search = 'scope=User.Read%20offline_access';")
+    ).toEqual(['User.Read', 'offline_access']);
+
+    const arrayBacked = [
+      "const arr = ['User.Read', 'offline_access', 'Sites.Read.All'];",
+      'const scopeSet = new Set(arr);',
+      "params.set('scope', Array.from(scopeSet).join(' '));",
+    ].join('\n');
+    expect(extractImplicitAuthScopesFromSource(arrayBacked)).toEqual([
+      'Sites.Read.All',
+      'User.Read',
+      'offline_access',
+    ]);
+  });
+
   it('does not allow policy to approve dynamic implicit-scope markers', () => {
     const snapshot = clone(baseline);
     snapshot.implicitAuthScopes = ['User.Read', 'offline_access', '<dynamic:extraScope>'];
@@ -988,6 +1108,31 @@ describe('MCP security baseline', () => {
     expect(validatePolicy(baseline, changed)).toContain(
       'productionProfile differs from the approved first-production contract'
     );
+  });
+
+  it('reports detailed deltas for dynamic and implicit-scope surfaces', () => {
+    const changed = clone(baseline);
+    changed.implicitAuthScopePassthroughs = [
+      ...(changed.implicitAuthScopePassthroughs ?? []),
+      'otherScopes',
+    ];
+    changed.dynamicCode = [...changed.dynamicCode, { file: 'src/x.ts', kind: 'call eval' }];
+    changed.nonLiteralModuleAcquisitions = [
+      ...changed.nonLiteralModuleAcquisitions,
+      { file: 'src/x.ts', kind: 'computed-member', expression: 'process[k]' },
+    ];
+    changed.nonLiteralDynamicImports = [
+      ...changed.nonLiteralDynamicImports,
+      { file: 'src/x.ts', expression: 'name' },
+    ];
+
+    const delta = describeBaselineDelta(baseline, changed).join('\n');
+    expect(delta).toContain('implicitAuthScopePassthroughs added: otherScopes');
+    expect(delta).toContain('dynamicCode added: src/x.ts|call eval');
+    expect(delta).toContain(
+      'nonLiteralModuleAcquisitions added: src/x.ts|computed-member|process[k]'
+    );
+    expect(delta).toContain('nonLiteralDynamicImports added: src/x.ts|name');
   });
 
   it('reports changed tool metadata as an explicit review delta', () => {
