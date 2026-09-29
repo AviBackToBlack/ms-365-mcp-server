@@ -11,7 +11,7 @@
     "bin/modules/extract-descriptions.mjs": "b591088dbd743b39190f5133f58da5c448e641d2a41a1f248ffea10e2bf11fc1",
     "bin/modules/generate-mcp-tools.mjs": "b19863a738ce68fd25ebb78e12b11bf5e17a0f79eacb1e289f3b71f585561e65",
     "bin/modules/simplified-openapi.mjs": "24a43b484370dd7453b0c2e89cbe76398740deb0a7cbd7a5d8dce86c23daeaa4",
-    "scripts/mcp-security-snapshot.mjs": "ab527df101ce3358644634d1dbb724f9d501785e23ded7569b09e4457b38c738",
+    "scripts/mcp-security-snapshot.mjs": "18252c82d9e724aad12a4a1ac56c2e3245e5f9f46e80df3f9f55bdd84239c4de",
     "scripts/verify-npm-audit.mjs": "71344b5cb46b10f9b4ae118d2c6139c69361a7e5f3e01b36029bb45de53737f4",
     "scripts/verify-supply-chain.mjs": "31b53257e352813eccac6c490b3a65b400e865862cac9ff6bc514a097d4555a9",
     "src/__tests__/graph-client.test.ts": "f209b4df7362d60a98ed22324937a08794b9b02800fe75fb616e30df262c093d",

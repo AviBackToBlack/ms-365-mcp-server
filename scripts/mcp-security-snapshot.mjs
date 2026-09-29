@@ -335,6 +335,31 @@ export function scanCode(files) {
       return undefined;
     }
 
+    function bindingElementKey(element) {
+      const property = element.propertyName;
+      if (!property) return ts.isIdentifier(element.name) ? element.name.text : undefined;
+      if (
+        ts.isIdentifier(property) ||
+        ts.isStringLiteralLike(property) ||
+        ts.isNumericLiteral(property)
+      ) {
+        return property.text;
+      }
+      if (ts.isComputedPropertyName(property)) {
+        const expr = unwrapExpression(property.expression);
+        if (expr && (ts.isStringLiteralLike(expr) || ts.isNumericLiteral(expr))) return expr.text;
+      }
+      return undefined;
+    }
+
+    function hasDynamicBindingKey(element) {
+      return (
+        !!element.propertyName &&
+        ts.isComputedPropertyName(element.propertyName) &&
+        bindingElementKey(element) === undefined
+      );
+    }
+
     function globalBuiltinMethodInfo(node) {
       const expr = unwrapExpression(node);
       if (!expr) return undefined;
@@ -407,6 +432,28 @@ export function scanCode(files) {
 
       if (ts.isCallExpression(expr)) {
         const callee = unwrapExpression(expr.expression);
+
+        if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
+          const method = literalMemberName(callee);
+          if (method === 'call' || method === 'apply') {
+            const target = requireLikeCallableInfo(memberOwner(callee));
+            if (target?.kind === 'createRequireFactory') {
+              return { kind: 'createRequire', boundArguments: [] };
+            }
+          }
+        }
+
+        const builtinMethod = globalBuiltinMethodInfo(callee);
+        if (
+          builtinMethod?.object === 'Reflect' &&
+          builtinMethod.method === 'apply' &&
+          expr.arguments[0]
+        ) {
+          const target = requireLikeCallableInfo(expr.arguments[0]);
+          if (target?.kind === 'createRequireFactory') {
+            return { kind: 'createRequire', boundArguments: [] };
+          }
+        }
 
         if (literalMemberName(callee) === 'bind') {
           const target = requireLikeCallableInfo(memberOwner(callee));
@@ -519,15 +566,21 @@ export function scanCode(files) {
           processAliases.add(name.text);
         } else if (ts.isObjectBindingPattern(name)) {
           for (const element of name.elements) {
-            if (!ts.isIdentifier(element.name)) continue;
-            if (element.dotDotDotToken) {
+            if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
               processAliases.add(element.name.text);
               continue;
             }
-            const imported = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-            const normalized = imported.replace(/^['"]|['"]$/g, '');
-            if (normalized === 'env') envAliases.add(element.name.text);
-            if (normalized === 'getBuiltinModule') {
+            const key = bindingElementKey(element);
+            if (key === undefined) {
+              nonLiteralModuleAcquisitions.push({
+                file: rel,
+                kind: 'computed-binding',
+                expression: element.getText(sf),
+              });
+              continue;
+            }
+            if (key === 'env') addEnvBinding(element.name);
+            if (key === 'getBuiltinModule' && ts.isIdentifier(element.name)) {
               getBuiltinModuleAliases.add(element.name.text);
             }
           }
@@ -539,13 +592,22 @@ export function scanCode(files) {
           moduleNamespaces.add(name.text);
         } else if (ts.isObjectBindingPattern(name)) {
           for (const element of name.elements) {
-            if (!ts.isIdentifier(element.name)) continue;
-            if (element.dotDotDotToken) {
+            if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
               moduleNamespaces.add(element.name.text);
               continue;
             }
-            const imported = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-            if (imported === 'createRequire') createRequireImports.add(element.name.text);
+            const key = bindingElementKey(element);
+            if (key === undefined) {
+              nonLiteralModuleAcquisitions.push({
+                file: rel,
+                kind: 'computed-binding',
+                expression: element.getText(sf),
+              });
+              continue;
+            }
+            if (key === 'createRequire' && ts.isIdentifier(element.name)) {
+              createRequireImports.add(element.name.text);
+            }
           }
         }
       }
@@ -560,16 +622,18 @@ export function scanCode(files) {
           processExecution.push({ file: rel, module: mod, callee: '*' });
         } else if (ts.isObjectBindingPattern(name)) {
           for (const element of name.elements) {
-            if (!ts.isIdentifier(element.name)) continue;
-            if (element.dotDotDotToken) {
+            if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
               childNamespaces.set(element.name.text, mod);
               processExecution.push({ file: rel, module: mod, callee: '*' });
               continue;
             }
-            const imported = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-            const local = element.name.getText(sf);
-            childImports.set(local, { module: mod, callee: imported });
-            processExecution.push({ file: rel, module: mod, callee: imported });
+            const key = bindingElementKey(element);
+            if (key === undefined || !ts.isIdentifier(element.name)) {
+              processExecution.push({ file: rel, module: mod, callee: '*' });
+              continue;
+            }
+            childImports.set(element.name.text, { module: mod, callee: key });
+            processExecution.push({ file: rel, module: mod, callee: key });
           }
         }
       }
@@ -579,14 +643,16 @@ export function scanCode(files) {
           fsNamespaces.add(name.text);
         } else if (ts.isObjectBindingPattern(name)) {
           for (const element of name.elements) {
-            if (!ts.isIdentifier(element.name)) continue;
-            if (element.dotDotDotToken) {
+            if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
               fsNamespaces.add(element.name.text);
               continue;
             }
-            const imported = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-            const local = element.name.getText(sf);
-            fsImports.set(local, imported);
+            const key = bindingElementKey(element);
+            if (key === undefined || !ts.isIdentifier(element.name)) {
+              filesystemWrites.push({ file: rel, callee: '<dynamic>' });
+              continue;
+            }
+            fsImports.set(element.name.text, key);
           }
         }
       }
@@ -738,6 +804,7 @@ export function scanCode(files) {
           for (const el of clause.namedBindings.elements) {
             if (el.isTypeOnly) continue;
             const imported = el.propertyName?.text ?? el.name.text;
+            if (imported === 'default') moduleNamespaces.add(el.name.text);
             if (imported === 'createRequire') createRequireImports.add(el.name.text);
           }
         }
@@ -772,8 +839,13 @@ export function scanCode(files) {
           for (const el of clause.namedBindings.elements) {
             if (el.isTypeOnly) continue;
             const imported = el.propertyName?.text ?? el.name.text;
-            childImports.set(el.name.text, { module: mod, callee: imported });
-            processExecution.push({ file: rel, module: mod, callee: imported });
+            if (imported === 'default') {
+              childNamespaces.set(el.name.text, mod);
+              processExecution.push({ file: rel, module: mod, callee: '*' });
+            } else {
+              childImports.set(el.name.text, { module: mod, callee: imported });
+              processExecution.push({ file: rel, module: mod, callee: imported });
+            }
           }
         } else if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
           childNamespaces.set(clause.namedBindings.name.text, mod);
@@ -785,7 +857,9 @@ export function scanCode(files) {
         if (clause.name) fsNamespaces.add(clause.name.text);
         if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
-            fsImports.set(el.name.text, el.propertyName?.text ?? el.name.text);
+            const imported = el.propertyName?.text ?? el.name.text;
+            if (imported === 'default') fsNamespaces.add(el.name.text);
+            else fsImports.set(el.name.text, imported);
           }
         } else if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
           fsNamespaces.add(clause.namedBindings.name.text);
@@ -862,7 +936,44 @@ export function scanCode(files) {
       }
     }
 
+    function markUnresolvedCapabilityBinding(initializer, element) {
+      const exprText = element.getText(sf);
+      if (isProcessObject(initializer) || isModuleNamespaceObject(initializer)) {
+        nonLiteralModuleAcquisitions.push({
+          file: rel,
+          kind: 'computed-binding',
+          expression: exprText,
+        });
+      }
+      if (isFsNamespaceObject(initializer)) {
+        filesystemWrites.push({ file: rel, callee: '<dynamic>' });
+      }
+      if (isGlobalThisObject(initializer)) {
+        dynamicCode.push({ file: rel, kind: 'alias globalThis.<dynamic>' });
+      }
+      if (ts.isIdentifier(initializer) && childNamespaces.has(initializer.text)) {
+        processExecution.push({
+          file: rel,
+          module: childNamespaces.get(initializer.text),
+          callee: '*',
+        });
+      }
+      for (const object of ['Reflect', 'Object', 'JSON']) {
+        if (!isGlobalBuiltinObject(initializer, object)) continue;
+        if (object === 'Reflect') dynamicCode.push({ file: rel, kind: 'alias Reflect.<dynamic>' });
+        else networkUrlEnvVars.add('<dynamic>');
+      }
+    }
+
     function visit(node) {
+      if (isDynamicModuleMemberAccess(node)) {
+        nonLiteralModuleAcquisitions.push({
+          file: rel,
+          kind: 'computed-member',
+          expression: node.getText(sf),
+        });
+      }
+
       if (
         (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
         ts.isObjectBindingPattern(node.name)
@@ -872,15 +983,14 @@ export function scanCode(files) {
             networkUrlEnvVars.add('<dynamic>');
             continue;
           }
-          if (element.propertyName && ts.isComputedPropertyName(element.propertyName)) {
+          const key = bindingElementKey(element);
+          if (key === undefined) {
             if (node.initializer && isEnvShapedObject(node.initializer)) {
               networkUrlEnvVars.add('<dynamic>');
             }
             continue;
           }
-          const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-          const normalized = key.replace(/^['"]|['"]$/g, '');
-          if (NETWORK_ENV_NAME_RE.test(normalized)) networkUrlEnvVars.add(normalized);
+          if (NETWORK_ENV_NAME_RE.test(key)) networkUrlEnvVars.add(key);
         }
       }
 
@@ -895,14 +1005,20 @@ export function scanCode(files) {
           isProcessObject(initializer)
         ) {
           for (const element of node.name.elements) {
-            if (!ts.isIdentifier(element.name)) continue;
-            if (element.dotDotDotToken) {
+            if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
               processAliases.add(element.name.text);
               continue;
             }
-            const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-            if (key === 'env') envAliases.add(element.name.text);
-            if (key === 'getBuiltinModule') getBuiltinModuleAliases.add(element.name.text);
+            const key = bindingElementKey(element);
+            if (key === undefined) {
+              markUnresolvedCapabilityBinding(initializer, element);
+              continue;
+            }
+            if (key === 'env') addEnvBinding(element.name);
+            if (key === 'getBuiltinModule') {
+              if (ts.isIdentifier(element.name)) getBuiltinModuleAliases.add(element.name.text);
+              else markUnresolvedCapabilityBinding(initializer, element);
+            }
           }
         }
 
@@ -913,7 +1029,11 @@ export function scanCode(files) {
           isGlobalThisObject(initializer)
         ) {
           for (const element of node.name.elements) {
-            const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
+            const key = bindingElementKey(element);
+            if (key === undefined) {
+              markUnresolvedCapabilityBinding(initializer, element);
+              continue;
+            }
             if (key === 'process' && ts.isIdentifier(element.name)) {
               processAliases.add(element.name.text);
             }
@@ -1000,39 +1120,50 @@ export function scanCode(files) {
               }
             }
           }
+
           for (const object of ['Reflect', 'Object', 'JSON']) {
             if (!isGlobalBuiltinObject(initializer, object)) continue;
             for (const element of node.name.elements) {
               if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
-              const key = (element.propertyName?.getText(sf) ?? element.name.getText(sf)).replace(
-                /^['"]|['"]$/g,
-                ''
-              );
+              const key = bindingElementKey(element);
+              if (key === undefined) {
+                markUnresolvedCapabilityBinding(initializer, element);
+                continue;
+              }
               globalBuiltinMethodAliases.set(element.name.text, { object, method: key });
             }
           }
+
           if (isGlobalThisObject(initializer)) {
             for (const element of node.name.elements) {
               if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
-              const key = (element.propertyName?.getText(sf) ?? element.name.getText(sf)).replace(
-                /^['"]|['"]$/g,
-                ''
-              );
+              const key = bindingElementKey(element);
+              if (key === undefined) {
+                markUnresolvedCapabilityBinding(initializer, element);
+                continue;
+              }
               if (key === 'structuredClone') structuredCloneAliases.add(element.name.text);
             }
           }
-          if (ts.isIdentifier(initializer) && moduleNamespaces.has(initializer.text)) {
+
+          if (isModuleNamespaceObject(initializer)) {
             for (const element of node.name.elements) {
-              if (!ts.isIdentifier(element.name)) continue;
-              if (element.dotDotDotToken) moduleNamespaces.add(element.name.text);
-              else {
-                const key = element.propertyName?.getText(sf) ?? element.name.getText(sf);
-                if (key.replace(/^['"]|['"]$/g, '') === 'createRequire') {
-                  createRequireImports.add(element.name.text);
-                }
+              if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
+                moduleNamespaces.add(element.name.text);
+                continue;
+              }
+              const key = bindingElementKey(element);
+              if (key === undefined) {
+                markUnresolvedCapabilityBinding(initializer, element);
+                continue;
+              }
+              if (key === 'createRequire') {
+                if (ts.isIdentifier(element.name)) createRequireImports.add(element.name.text);
+                else markUnresolvedCapabilityBinding(initializer, element);
               }
             }
           }
+
           if (isFsNamespaceObject(initializer)) {
             for (const element of node.name.elements) {
               if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
@@ -1040,12 +1171,22 @@ export function scanCode(files) {
               }
             }
           }
+
           if (ts.isIdentifier(initializer) && childNamespaces.has(initializer.text)) {
+            const mod = childNamespaces.get(initializer.text);
             for (const element of node.name.elements) {
-              if (!ts.isIdentifier(element.name)) continue;
-              if (element.dotDotDotToken) {
-                childNamespaces.set(element.name.text, childNamespaces.get(initializer.text));
+              if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
+                childNamespaces.set(element.name.text, mod);
+                processExecution.push({ file: rel, module: mod, callee: '*' });
+                continue;
               }
+              const key = bindingElementKey(element);
+              if (key === undefined || !ts.isIdentifier(element.name)) {
+                processExecution.push({ file: rel, module: mod, callee: '*' });
+                continue;
+              }
+              childImports.set(element.name.text, { module: mod, callee: key });
+              processExecution.push({ file: rel, module: mod, callee: key });
             }
           }
         }
@@ -1057,11 +1198,14 @@ export function scanCode(files) {
           isFsNamespaceObject(initializer)
         ) {
           for (const element of node.name.elements) {
-            if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue;
-            const imported = element.propertyName?.getText(sf) ?? element.name.text;
-            const normalized = imported.replace(/^['"]|['"]$/g, '');
-            if (FS_WRITE_CALLEES.has(normalized)) {
-              fsImports.set(element.name.text, normalized);
+            if (element.dotDotDotToken) continue;
+            const key = bindingElementKey(element);
+            if (key === undefined || !ts.isIdentifier(element.name)) {
+              markUnresolvedCapabilityBinding(initializer, element);
+              continue;
+            }
+            if (FS_WRITE_CALLEES.has(key)) {
+              fsImports.set(element.name.text, key);
             }
           }
         }
@@ -1086,18 +1230,6 @@ export function scanCode(files) {
           if (mod) bindRequiredModule(node.name, mod);
         }
 
-        if (
-          ts.isVariableDeclaration(node) &&
-          node.initializer &&
-          isDynamicModuleMemberAccess(node.initializer)
-        ) {
-          nonLiteralModuleAcquisitions.push({
-            file: rel,
-            kind: 'computed-member',
-            expression: node.initializer.getText(sf),
-          });
-        }
-
         const aliasTarget = dynamicCodeTarget(node.initializer);
         if (aliasTarget) dynamicCode.push({ file: rel, kind: 'alias ' + aliasTarget });
 
@@ -1108,10 +1240,11 @@ export function scanCode(files) {
           isGlobalThisObject(node.initializer)
         ) {
           for (const element of node.name.elements) {
-            const key = (element.propertyName?.getText(sf) ?? element.name.getText(sf)).replace(
-              /^['"]|['"]$/g,
-              ''
-            );
+            const key = bindingElementKey(element);
+            if (key === undefined) {
+              markUnresolvedCapabilityBinding(node.initializer, element);
+              continue;
+            }
             if (key === 'eval' || key === 'Function') {
               dynamicCode.push({ file: rel, kind: 'alias globalThis.' + key });
             }
@@ -1151,6 +1284,12 @@ export function scanCode(files) {
           const arg = node.arguments[0];
           if (arg && ts.isStringLiteralLike(arg)) {
             dynamicImports.push({ file: rel, specifier: arg.text });
+            if (VM_MODULES.has(arg.text)) {
+              dynamicCode.push({ file: rel, kind: 'module ' + arg.text });
+            }
+            if (CHILD_PROCESS_MODULES.has(arg.text) || WORKER_THREAD_MODULES.has(arg.text)) {
+              processExecution.push({ file: rel, module: arg.text, callee: '*' });
+            }
           } else {
             nonLiteralDynamicImports.push({
               file: rel,
@@ -1192,6 +1331,64 @@ export function scanCode(files) {
         const callBuiltinMethod = globalBuiltinMethodInfo(callExpr);
 
         if (
+          callBuiltinMethod?.object === 'Reflect' &&
+          ['apply', 'construct'].includes(callBuiltinMethod.method) &&
+          node.arguments[0]
+        ) {
+          const reflectTarget = dynamicCodeTarget(node.arguments[0]);
+          if (reflectTarget) {
+            dynamicCode.push({
+              file: rel,
+              kind: 'Reflect.' + callBuiltinMethod.method + ' ' + reflectTarget,
+            });
+          }
+          const reflectFsWrite = fsWriteTarget(node.arguments[0]);
+          if (reflectFsWrite) filesystemWrites.push({ file: rel, callee: reflectFsWrite });
+        }
+
+        const wholesaleEnvBuiltinCall =
+          (callBuiltinMethod?.object === 'Object' &&
+            [
+              'entries',
+              'keys',
+              'values',
+              'getOwnPropertyNames',
+              'getOwnPropertySymbols',
+              'getOwnPropertyDescriptor',
+              'getOwnPropertyDescriptors',
+              'assign',
+              'defineProperty',
+              'defineProperties',
+            ].includes(callBuiltinMethod.method)) ||
+          (callBuiltinMethod?.object === 'JSON' && callBuiltinMethod.method === 'stringify') ||
+          (callBuiltinMethod?.object === 'Reflect' &&
+            [
+              'ownKeys',
+              'getOwnPropertyDescriptor',
+              'set',
+              'deleteProperty',
+              'defineProperty',
+            ].includes(callBuiltinMethod.method));
+
+        if (wholesaleEnvBuiltinCall && node.arguments.some((arg) => isEnvShapedObject(arg))) {
+          networkUrlEnvVars.add('<dynamic>');
+        }
+
+        if (
+          callBuiltinMethod?.object === 'Reflect' &&
+          callBuiltinMethod.method === 'get' &&
+          node.arguments[0] &&
+          isEnvShapedObject(node.arguments[0])
+        ) {
+          const key = node.arguments[1];
+          if (key && ts.isStringLiteralLike(key) && NETWORK_ENV_NAME_RE.test(key.text)) {
+            networkUrlEnvVars.add(key.text);
+          } else {
+            networkUrlEnvVars.add('<dynamic>');
+          }
+        }
+
+        if (
           ((ts.isIdentifier(callExpr) && structuredCloneAliases.has(callExpr.text)) ||
             (callOwner && callMethod === 'structuredClone' && isGlobalThisObject(callOwner))) &&
           node.arguments.some((arg) => isEnvShapedObject(arg))
@@ -1206,14 +1403,6 @@ export function scanCode(files) {
           !ts.isStringLiteralLike(callExpr.argumentExpression)
         ) {
           filesystemWrites.push({ file: rel, callee: '<dynamic>' });
-        }
-
-        if (isDynamicModuleMemberAccess(callExpr)) {
-          nonLiteralModuleAcquisitions.push({
-            file: rel,
-            kind: 'computed-member',
-            expression: callExpr.getText(sf),
-          });
         }
 
         if (callOwner && callMethod) {
@@ -1656,18 +1845,30 @@ function extractImplicitAuthScopeInventoryFromSource(source, path = 'src/server.
       if (first && ts.isObjectLiteralExpression(first)) {
         for (const property of first.properties) {
           if (ts.isPropertyAssignment(property)) {
-            if (propertyNameText(property.name) === 'scope') recordSink(property.initializer);
+            const name = propertyNameText(property.name);
+            if (name === 'scope') recordSink(property.initializer);
+            else if (name === undefined) sinkScopes.add(dynamicMarker(property.name));
           } else if (ts.isShorthandPropertyAssignment(property) && property.name.text === 'scope') {
             recordSink(property.name);
+          } else if (ts.isSpreadAssignment(property)) {
+            sinkScopes.add(dynamicMarker(property.expression));
+          } else {
+            const name = property.name ? propertyNameText(property.name) : undefined;
+            if (name === 'scope' || name === undefined) sinkScopes.add(dynamicMarker(property));
           }
         }
       } else if (first && ts.isArrayLiteralExpression(first)) {
         for (const tuple of first.elements) {
           const entry = unwrap(tuple);
-          if (!entry || !ts.isArrayLiteralExpression(entry) || entry.elements.length < 2) continue;
+          if (!entry || !ts.isArrayLiteralExpression(entry) || entry.elements.length < 2) {
+            sinkScopes.add(dynamicMarker(tuple));
+            continue;
+          }
           const key = unwrap(entry.elements[0]);
-          if (key && ts.isStringLiteralLike(key) && key.text === 'scope') {
-            recordSink(entry.elements[1]);
+          if (key && ts.isStringLiteralLike(key)) {
+            if (key.text === 'scope') recordSink(entry.elements[1]);
+          } else {
+            sinkScopes.add(dynamicMarker(entry.elements[0]));
           }
         }
       } else if (first && ts.isStringLiteralLike(first)) {
@@ -1677,12 +1878,42 @@ function extractImplicitAuthScopeInventoryFromSource(source, path = 'src/server.
       }
     }
 
+    if (ts.isBinaryExpression(node)) {
+      const leftMember = memberName(node.left);
+      if (
+        leftMember === 'search' &&
+        [ts.SyntaxKind.EqualsToken, ts.SyntaxKind.PlusEqualsToken].includes(node.operatorToken.kind)
+      ) {
+        recordQueryString(node.right);
+      }
+      if (leftMember === 'searchParams' && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        sinkScopes.add(dynamicMarker(node.right));
+      }
+    }
+
     if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      memberName(node.left) === 'search'
+      ts.isCallExpression(node) &&
+      memberName(node.expression) === 'assign' &&
+      node.arguments.length >= 2 &&
+      node.arguments.slice(1).some((arg) => {
+        const value = unwrap(arg);
+        if (!value || !ts.isObjectLiteralExpression(value)) return false;
+        let touched = false;
+        for (const property of value.properties) {
+          if (!ts.isPropertyAssignment(property)) continue;
+          const name = propertyNameText(property.name);
+          if (name === 'search') {
+            recordQueryString(property.initializer);
+            touched = true;
+          } else if (name === 'searchParams' || name === undefined) {
+            sinkScopes.add(dynamicMarker(property.initializer));
+            touched = true;
+          }
+        }
+        return touched;
+      })
     ) {
-      recordQueryString(node.right);
+      // Side effects above intentionally record the reviewed query-string sinks.
     }
 
     ts.forEachChild(node, visit);
@@ -1982,6 +2213,8 @@ export function describeBaselineDelta(before, after) {
     'graphScopes',
     'implicitAuthScopes',
     'implicitAuthScopePassthroughs',
+    'writeLikeScopes',
+    'staticUrlHosts',
     'cloudNetworkHosts',
     'networkUrlEnvVars',
     'writeCapableTools',
@@ -1990,6 +2223,18 @@ export function describeBaselineDelta(before, after) {
     if (delta.added.length) lines.push(`${field} added: ${delta.added.join(', ')}`);
     if (delta.removed.length) lines.push(`${field} removed: ${delta.removed.join(', ')}`);
   }
+
+  const beforeTools = before.toolFingerprints ?? {};
+  const afterTools = after.toolFingerprints ?? {};
+  const toolNames = [...new Set([...Object.keys(beforeTools), ...Object.keys(afterTools)])].sort();
+  const addedTools = toolNames.filter((name) => !(name in beforeTools) && name in afterTools);
+  const removedTools = toolNames.filter((name) => name in beforeTools && !(name in afterTools));
+  const changedTools = toolNames.filter(
+    (name) => name in beforeTools && name in afterTools && beforeTools[name] !== afterTools[name]
+  );
+  if (addedTools.length) lines.push(`toolFingerprints added: ${addedTools.join(', ')}`);
+  if (removedTools.length) lines.push(`toolFingerprints removed: ${removedTools.join(', ')}`);
+  if (changedTools.length) lines.push(`toolFingerprints changed: ${changedTools.join(', ')}`);
 
   for (const [field, keyFields] of [
     ['processExecution', ['file', 'module', 'callee']],

@@ -591,6 +591,105 @@ describe('MCP security baseline', () => {
     expect(globalAlias.networkUrlEnvVars).toContain('<dynamic>');
   });
 
+  it('normalizes named-default module, fs, and execution namespaces', () => {
+    const moduleScan = scanFixture(
+      "import { default as m } from 'node:module'; m.createRequire(import.meta.url)('vm');"
+    );
+    expect(moduleScan.dynamicCode.some((entry) => entry.kind === 'module vm')).toBe(true);
+
+    const fsScan = scanFixture(
+      "import { default as f } from 'node:fs'; const k = getMethod(); f[k]('/tmp/a', 'x');"
+    );
+    expect(fsScan.filesystemWrites.some((entry) => entry.callee === '<dynamic>')).toBe(true);
+
+    const childScan = scanFixture(
+      "import { default as cp } from 'node:child_process'; cp.execSync('x');"
+    );
+    expect(
+      childScan.processExecution.some(
+        (entry) => entry.module === 'node:child_process' && entry.callee === 'execSync'
+      )
+    ).toBe(true);
+  });
+
+  it('preserves createRequire factory results through call/apply/Reflect.apply', () => {
+    const fixtures = [
+      "import { createRequire } from 'node:module'; const r = createRequire.call(null, import.meta.url); r('vm');",
+      "import { createRequire } from 'node:module'; const r = createRequire.apply(null, [import.meta.url]); r('vm');",
+      "import * as m from 'node:module'; const r = m.createRequire.call(m, import.meta.url); r('vm');",
+      "import { createRequire } from 'node:module'; const r = Reflect.apply(createRequire, null, [import.meta.url]); r('vm');",
+      "import { createRequire } from 'node:module'; createRequire.call(null, import.meta.url)('vm');",
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.dynamicCode.some((entry) => entry.kind === 'module vm')).toBe(true);
+    }
+  });
+
+  it('normalizes computed literal binding keys and fails closed on dynamic binding keys', () => {
+    const literal = scanFixture(
+      [
+        "const { ['getBuiltinModule']: g } = process; g('node:vm');",
+        "import * as m from 'node:module'; const { ['createRequire']: c } = m; c(import.meta.url)('vm');",
+        "const { ['eval']: e } = globalThis; void e;",
+        "const { ['apply']: a } = Reflect; a(eval, null, ['1']);",
+        "const { ['env']: e2 } = process; e2['SERVICE_URL'];",
+        "import * as fs from 'node:fs'; const { ['writeFileSync']: w } = fs; w('/tmp/a', 'x');",
+      ].join('\n')
+    );
+    expect(literal.dynamicCode.some((entry) => entry.kind === 'module node:vm')).toBe(true);
+    expect(literal.dynamicCode.some((entry) => entry.kind === 'module vm')).toBe(true);
+    expect(literal.dynamicCode.some((entry) => entry.kind === 'alias globalThis.eval')).toBe(true);
+    expect(literal.dynamicCode.some((entry) => entry.kind === 'Reflect.apply eval')).toBe(true);
+    expect(literal.networkUrlEnvVars).toContain('SERVICE_URL');
+    expect(literal.filesystemWrites.some((entry) => entry.callee === 'writeFileSync')).toBe(true);
+
+    const dynamic = scanFixture(
+      [
+        'const k = getKey();',
+        'const { [k]: p } = process;',
+        "import * as m from 'node:module'; const { [k]: c } = m;",
+        "import * as fs from 'node:fs'; const { [k]: w } = fs;",
+        'const { [k]: x } = globalThis;',
+      ].join('\n')
+    );
+    expect(dynamic.nonLiteralModuleAcquisitions.length).toBeGreaterThan(0);
+    expect(dynamic.filesystemWrites.some((entry) => entry.callee === '<dynamic>')).toBe(true);
+    expect(dynamic.dynamicCode.length).toBeGreaterThan(0);
+  });
+
+  it('marks computed process/module members regardless of AST nesting position', () => {
+    const fixtures = [
+      'const k = getMethod(); const r = process[k].bind(process);',
+      'const k = getMethod(); f(process[k]);',
+      'const k = getMethod(); const g = a ?? process[k];',
+      'const k = getMethod(); function x() { return process[k]; }',
+      'const k = getMethod(); x = process[k];',
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(
+        scan.nonLiteralModuleAcquisitions.some((entry) => entry.kind === 'computed-member')
+      ).toBe(true);
+    }
+  });
+
+  it('preserves member precision for child namespace destructuring and nested env bindings', () => {
+    const child = scanFixture(
+      "import * as cp from 'node:child_process'; const { execSync } = cp; execSync('x');"
+    );
+    expect(
+      child.processExecution.some(
+        (entry) => entry.module === 'node:child_process' && entry.callee === 'execSync'
+      )
+    ).toBe(true);
+
+    const env = scanFixture('const { env: { SERVICE_URL } } = process; void SERVICE_URL;');
+    expect(env.networkUrlEnvVars).toContain('SERVICE_URL');
+  });
+
   it('normalizes builtin aliases, global destructuring, and env writes', () => {
     const scan = scanFixture(
       [
@@ -619,6 +718,9 @@ describe('MCP security baseline', () => {
 
     const vmScan = scanFixture("import 'node:vm';");
     expect(vmScan.dynamicCode.some((entry) => entry.kind === 'module node:vm')).toBe(true);
+
+    const dynamicVmScan = scanFixture("void import('node:vm');");
+    expect(dynamicVmScan.dynamicCode.some((entry) => entry.kind === 'module node:vm')).toBe(true);
 
     const childScan = scanFixture("import 'node:child_process';");
     expect(
@@ -942,6 +1044,46 @@ describe('MCP security baseline', () => {
       'User.Read',
       'offline_access',
     ]);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        'const k = getKey(); const v = getScopes(); new URLSearchParams({ [k]: v });'
+      ).some((scope) => scope.startsWith('<dynamic:'))
+    ).toBe(true);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        'const x = getObject(); new URLSearchParams({ ...x });'
+      ).some((scope) => scope.startsWith('<dynamic:'))
+    ).toBe(true);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        "const k = getKey(); new URLSearchParams([[k, 'User.Read']]);"
+      ).some((scope) => scope.startsWith('<dynamic:'))
+    ).toBe(true);
+
+    expect(extractImplicitAuthScopesFromSource("url.search += '&scope=Sites.Read.All';")).toContain(
+      'Sites.Read.All'
+    );
+
+    expect(
+      extractImplicitAuthScopesFromSource('url.searchParams = getParams();').some((scope) =>
+        scope.startsWith('<dynamic:')
+      )
+    ).toBe(true);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        "Object.assign(url, { search: '?scope=Chat.Read%20Mail.Read' });"
+      )
+    ).toEqual(['Chat.Read', 'Mail.Read']);
+
+    expect(
+      extractImplicitAuthScopesFromSource(
+        'Object.assign(url, { searchParams: getParams() });'
+      ).some((scope) => scope.startsWith('<dynamic:'))
+    ).toBe(true);
   });
 
   it('does not allow policy to approve dynamic implicit-scope markers', () => {
@@ -1116,6 +1258,10 @@ describe('MCP security baseline', () => {
       ...(changed.implicitAuthScopePassthroughs ?? []),
       'otherScopes',
     ];
+    changed.writeLikeScopes = [...changed.writeLikeScopes, 'Files.ReadWrite.All'];
+    changed.staticUrlHosts = [...changed.staticUrlHosts, 'example.invalid'];
+    const changedTool = Object.keys(changed.toolFingerprints)[0];
+    changed.toolFingerprints[changedTool] = '0'.repeat(64);
     changed.dynamicCode = [...changed.dynamicCode, { file: 'src/x.ts', kind: 'call eval' }];
     changed.nonLiteralModuleAcquisitions = [
       ...changed.nonLiteralModuleAcquisitions,
@@ -1128,6 +1274,9 @@ describe('MCP security baseline', () => {
 
     const delta = describeBaselineDelta(baseline, changed).join('\n');
     expect(delta).toContain('implicitAuthScopePassthroughs added: otherScopes');
+    expect(delta).toContain('writeLikeScopes added: Files.ReadWrite.All');
+    expect(delta).toContain('staticUrlHosts added: example.invalid');
+    expect(delta).toContain(`toolFingerprints changed: ${changedTool}`);
     expect(delta).toContain('dynamicCode added: src/x.ts|call eval');
     expect(delta).toContain(
       'nonLiteralModuleAcquisitions added: src/x.ts|computed-member|process[k]'
