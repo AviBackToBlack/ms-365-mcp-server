@@ -53,14 +53,16 @@ The baseline inventories every `scopes` and `workScopes` value in `src/endpoints
 
 The current source contains 71 distinct endpoint scopes. The policy allowlist means a newly introduced Graph permission fails CI until the policy is intentionally updated in a reviewed PR.
 
-OAuth-layer scopes are inventoried separately by following the `Set` whose value is serialized into the OAuth `scope` query parameter; the extractor does not depend on the local variable name. The current HTTP/OAuth path implicitly adds:
+OAuth-layer scopes are inventoried separately at the OAuth `scope` serialization sinks; the extractor does not depend on the local `Set` variable name or on `Array.from(...)` as the only serialization spelling. The current HTTP/OAuth path implicitly adds:
 
 - `User.Read`
 - `offline_access`
 
-This separation prevents an auth-layer permission change from hiding behind an unchanged endpoint catalog. The policy is exact for this inventory: additions and removals both require an intentional policy update, and an unexpectedly empty implicit-scope inventory fails closed.
+The runtime-provided base collection that is passed through that sink is tracked independently as an exact passthrough source (`baseScopes`). Replacing it or adding another spread/passthrough source changes `implicitAuthScopePassthroughs` and fails policy validation until explicitly reviewed. This keeps the runtime-selected base scopes distinct from literals that the auth layer itself adds while still making passthrough drift visible.
 
-Literal scopes added later through `Set.add('Scope')` are inventoried as well. A non-literal implicit scope value is emitted as an explicit dynamic marker, which is unapproved by default and therefore fails closed instead of disappearing from the inventory.
+The extractor also recognizes direct literal scope strings, spread-array serialization, `Array.from(...)`, `.concat(...)`, both `set('scope', ...)` and `append('scope', ...)`, and object-form `new URLSearchParams({ scope: ... })`. Literal scopes added later through `Set.add('Scope')` are inventoried as well. Any unrecognized sink value or non-literal added value is emitted as an explicit dynamic marker. Dynamic implicit-scope markers are reserved and cannot be policy-approved, so unsupported serialization fails closed instead of disappearing from the inventory.
+
+This separation prevents an auth-layer permission change from hiding behind an unchanged endpoint catalog. The policy is exact for both the implicit-scope inventory and its passthrough sources: additions and removals require an intentional policy update, and an unexpectedly empty implicit-scope inventory fails closed.
 
 The approved **first production profile** remains narrower than the capabilities present in source:
 

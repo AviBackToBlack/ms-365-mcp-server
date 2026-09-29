@@ -7,6 +7,7 @@ import {
   compareSnapshots,
   describeBaselineDelta,
   extractImplicitAuthScopesFromSource,
+  extractImplicitAuthScopePassthroughsFromSource,
   scanCode,
   validatePolicy,
 } from '../scripts/mcp-security-snapshot.mjs';
@@ -500,6 +501,64 @@ describe('MCP security baseline', () => {
     }
   });
 
+  it('closes require-family one-hop alias and bind escapes', () => {
+    const fixtures = [
+      "import proc from 'node:process'; const g = proc['getBuiltinModule']; g('vm');",
+      "import * as m from 'node:module'; const m2 = m; m2.createRequire(import.meta.url)('vm');",
+      "import * as m from 'node:module'; const { createRequire } = m; createRequire(import.meta.url)('vm');",
+      "import { createRequire } from 'node:module'; const cr = createRequire; cr(import.meta.url)('vm');",
+      "import * as m from 'node:module'; m['createRequire'](import.meta.url)('vm');",
+      "require.bind(null)('vm');",
+      "Reflect['apply'](require, null, ['vm']);",
+      "import proc from 'node:process'; proc.getBuiltinModule.bind(proc)('vm');",
+      "const { ...rest } = require('node:process'); rest.getBuiltinModule('vm');",
+    ];
+
+    for (const source of fixtures) {
+      const scan = scanFixture(source);
+      expect(scan.dynamicCode.some((site) => site.kind === 'module vm')).toBe(true);
+    }
+  });
+
+  it('propagates fs, child-process and global-object aliases conservatively', () => {
+    const fsBound = scanFixture(
+      "import * as fs from 'node:fs'; const w = fs.writeFileSync.bind(fs); w('/tmp/a', 'x');"
+    );
+    expect(fsBound.filesystemWrites.some((site) => site.callee === 'writeFileSync')).toBe(true);
+
+    const fsAlias = scanFixture(
+      "import * as fs from 'node:fs'; const fs2 = fs; const k = getMethod(); fs2[k]('/tmp/a', 'x');"
+    );
+    expect(fsAlias.filesystemWrites.some((site) => site.callee === '<dynamic>')).toBe(true);
+
+    const childAlias = scanFixture(
+      "import * as cp from 'node:child_process'; const cp2 = cp; cp2.execSync('x');"
+    );
+    expect(childAlias.processExecution.some((site) => site.callee === 'execSync')).toBe(true);
+
+    const globalAlias = scanFixture(
+      "const g = globalThis; g.eval('1'); g.Object.keys(process.env); g.process.env[getKey()];"
+    );
+    expect(globalAlias.dynamicCode.some((site) => site.kind === 'call globalThis.eval')).toBe(true);
+    expect(globalAlias.networkUrlEnvVars).toContain('<dynamic>');
+  });
+
+  it('forbids constructor-chain dynamic code and process.dlopen', () => {
+    const scan = scanFixture(
+      [
+        "globalThis.Function.prototype.constructor('return 1');",
+        "({}).constructor.constructor('return 1');",
+        "globalThis['Function']['prototype']['constructor']('return 1');",
+        "({})['constructor']['constructor']('return 1');",
+        "process.dlopen(module, '/tmp/native.node');",
+      ].join('\n')
+    );
+    const kinds = scan.dynamicCode.map((entry) => entry.kind);
+    expect(kinds).toContain('call Function.prototype.constructor');
+    expect(kinds).toContain('call constructor.constructor');
+    expect(kinds).toContain('process.dlopen');
+  });
+
   it('tracks bare WriteStream construction and fs.promises/rebound calls', () => {
     const fixtures = [
       {
@@ -526,6 +585,13 @@ describe('MCP security baseline', () => {
         source: [
           "import * as fs from 'node:fs';",
           "fs.writeFileSync.call(fs, '/tmp/a', 'x');",
+        ].join('\n'),
+        callee: 'writeFileSync',
+      },
+      {
+        source: [
+          "import * as fs from 'node:fs';",
+          "fs.writeFileSync.bind(fs)('/tmp/a', 'x');",
         ].join('\n'),
         callee: 'writeFileSync',
       },
@@ -715,6 +781,56 @@ describe('MCP security baseline', () => {
     snapshot.implicitAuthScopes = dynamicScopes;
     expect(validatePolicy(snapshot, policy).join('\n')).toContain(
       'unapproved implicit auth scopes: <dynamic:extraScope>'
+    );
+  });
+
+  it('fails closed on alternate OAuth scope serialization and passthrough drift', () => {
+    const concatScopes = extractImplicitAuthScopesFromSource(
+      [
+        "const scopeSet = new Set([...baseScopes, 'User.Read', 'offline_access']);",
+        "params.set('scope', Array.from(scopeSet).concat('Sites.ReadWrite.All').join(' '));",
+      ].join('\n')
+    );
+    expect(concatScopes).toContain('Sites.ReadWrite.All');
+
+    const spreadScopes = extractImplicitAuthScopesFromSource(
+      [
+        "const scopeSet = new Set([...baseScopes, 'User.Read', 'offline_access']);",
+        "params.set('scope', [...scopeSet].join(' '));",
+      ].join('\n')
+    );
+    expect(spreadScopes).toEqual(['User.Read', 'offline_access']);
+
+    expect(
+      extractImplicitAuthScopesFromSource("params.set('scope', 'User.Read offline_access X');")
+    ).toEqual(['User.Read', 'X', 'offline_access']);
+    expect(extractImplicitAuthScopesFromSource("searchParams.append('scope', v);")).toContain(
+      '<dynamic:v>'
+    );
+    expect(extractImplicitAuthScopesFromSource('new URLSearchParams({ scope: v });')).toContain(
+      '<dynamic:v>'
+    );
+
+    const source = [
+      "const scopeSet = new Set([...injected, 'User.Read', 'offline_access']);",
+      "params.set('scope', Array.from(scopeSet).join(' '));",
+    ].join('\n');
+    expect(extractImplicitAuthScopePassthroughsFromSource(source)).toEqual(['injected']);
+
+    const snapshot = clone(baseline);
+    snapshot.implicitAuthScopePassthroughs = ['injected'];
+    expect(validatePolicy(snapshot, policy).join('\n')).toContain(
+      'unapproved implicit auth scope passthroughs: injected'
+    );
+  });
+
+  it('does not allow policy to approve dynamic implicit-scope markers', () => {
+    const snapshot = clone(baseline);
+    snapshot.implicitAuthScopes = ['User.Read', 'offline_access', '<dynamic:extraScope>'];
+    const weakened = clone(policy);
+    weakened.approvedImplicitAuthScopes.push('<dynamic:extraScope>');
+    expect(validatePolicy(snapshot, weakened).join('\n')).toContain(
+      'policy must not approve dynamic implicit auth scope markers'
     );
   });
 

@@ -80,6 +80,7 @@
     "VirtualEvent.Read"
   ],
   "approvedImplicitAuthScopes": ["User.Read", "offline_access"],
+  "approvedImplicitAuthScopePassthroughs": ["baseScopes"],
   "approvedCloudNetworkHosts": [
     "graph.microsoft.com",
     "login.chinacloudapi.cn",
